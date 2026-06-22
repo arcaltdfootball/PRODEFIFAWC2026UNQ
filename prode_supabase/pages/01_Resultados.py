@@ -1,5 +1,7 @@
 from flags import FLAGS
 import streamlit as st
+from messiboot import render_messiboot
+render_messiboot()
 from database import conectar
 
 st.set_page_config(
