@@ -1,4 +1,6 @@
 import streamlit as st
+from messiboot import render_messiboot
+render_messiboot()
 import pandas as pd
 import base64
 from ranking import obtener_ranking
