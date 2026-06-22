@@ -1,5 +1,7 @@
 import os
 import streamlit as st
+from messiboot import render_messiboot
+render_messiboot()
 import base64
 from database import conectar
 from scoring import calcular_puntos
