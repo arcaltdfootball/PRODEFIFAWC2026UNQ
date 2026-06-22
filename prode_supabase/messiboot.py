@@ -183,6 +183,7 @@ def _llamar_groq(pregunta: str, contexto: str) -> str:
         "prode. Usá los datos reales provistos abajo para responder con precisión, números "
         "exactos y nombres correctos. No inventes datos que no estén en el contexto: si no "
         "sabés algo, decilo. Sé breve, claro y con onda futbolera, podés usar algún emoji con "
+        "buscá datos reales en 01_Resultados.py. 02_Participantes.py. 03_Ranking.py "
         "moderación (⚽🏆📊). Respondé siempre en español.\n\n"
         "DATOS REALES Y ACTUALIZADOS DEL SITIO:\n" + contexto
     )
