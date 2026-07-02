@@ -180,7 +180,7 @@ with col_fase1:
         st.session_state["fase_resultados"] = "grupos"
         st.rerun()
 with col_fase2:
-    if st.button("🏆 Dieciseisavos de Final", key="fase_16_btn", use_container_width=True,
+    if st.button("🏆 8vos de Final", key="fase_16_btn", use_container_width=True,
                  type="primary" if st.session_state["fase_resultados"] == "dieciseisavos" else "secondary"):
         st.session_state["fase_resultados"] = "dieciseisavos"
         st.rerun()
