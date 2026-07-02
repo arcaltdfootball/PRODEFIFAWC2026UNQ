@@ -422,7 +422,7 @@ def render_dots(idx, total):
 # ════════════════════════════════════════════════════════════════════════════════
 # TABS PRINCIPALES
 # ════════════════════════════════════════════════════════════════════════════════
-tab_grupos, tab_16 = st.tabs(["🏟️  Fase de Grupos", "⚔️  Dieciseisavos de Final"])
+tab_grupos, tab_16 = st.tabs(["Fase de Grupos", "8vos de Final"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — FASE DE GRUPOS
