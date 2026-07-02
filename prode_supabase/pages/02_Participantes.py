@@ -1281,7 +1281,7 @@ for numero, p in enumerate(participantes_filtrados, start=1):
             cruces_16 = resp_16.data
 
             if not cruces_16:
-                st.info("Todavía no se cargaron los cruces de Dieciseisavos de Final.")
+                st.info("Todavía no se cargaron los cruces de 8vos de Final.")
             else:
                 resp_pron_16 = (
                     sb.table("pronosticos_dieciseisavos")
@@ -1306,7 +1306,7 @@ for numero, p in enumerate(participantes_filtrados, start=1):
                 st.markdown(
                     '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:17px;'
                     'color:#e8c96b;letter-spacing:2px;margin:14px 0 6px 0;">'
-                    'DIECISEISAVOS DE FINAL'
+                    '8VOS DE FINAL'
                     ' <span style="font-size:12px;color:#94a3b8;font-family:\'DM Sans\',sans-serif;font-weight:400;">'
                     '· ' + str(comp_16) + '/' + str(total_16) + ' pronósticos</span></div>',
                     unsafe_allow_html=True
