@@ -1105,7 +1105,7 @@ for numero, p in enumerate(participantes_filtrados, start=1):
                 st.session_state[key_fase] = "grupos"
                 st.rerun()
         with col_f2:
-            if st.button("🏆 Dieciseisavos", key="fboleta_16_" + str(p_id),
+            if st.button("🏆8vos de FInal", key="fboleta_16_" + str(p_id),
                          use_container_width=True,
                          type="primary" if st.session_state[key_fase] == "dieciseisavos" else "secondary"):
                 st.session_state[key_fase] = "dieciseisavos"
