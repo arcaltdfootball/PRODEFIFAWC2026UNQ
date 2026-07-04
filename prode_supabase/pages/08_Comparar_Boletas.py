@@ -474,7 +474,7 @@ if st.session_state.get("cmp_activo"):
         unsafe_allow_html=True,
     )
 
-    tab_grupos, tab_16 = st.tabs(["🏟️  Fase de Grupos", "⚔️  Dieciseisavos de Final"])
+    tab_grupos, tab_16 = st.tabs(["Fase de Grupos", "8vos de Final"])
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 1 — FASE DE GRUPOS
