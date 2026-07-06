@@ -394,7 +394,7 @@ df_16 = build_df(ranking_16_adj, "pos_ant_16")
 busqueda = st.text_input("🔍  Buscar participante", placeholder="Nombre...")
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_general, tab_16 = st.tabs(["🏆  Ranking General", "⚔️  Dieciseisavos de Final"])
+tab_general, tab_16 = st.tabs(["Ranking General", "8vos de Final"])
 
 with tab_general:
     render_ranking(df_general, busqueda, "pos_ant_general", modo="general")
