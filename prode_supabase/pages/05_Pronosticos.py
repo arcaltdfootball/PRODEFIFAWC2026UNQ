@@ -588,7 +588,7 @@ with tab_16:
                 resultado_16 = signo_de_marcador(f"{gl_of}-{gv_of}") or ""
 
         st.markdown(
-            '<p class="grupo-activo-label">DIECISEISAVOS DE FINAL</p>',
+            '<p class="grupo-activo-label">8VOS DE FINAL</p>',
             unsafe_allow_html=True,
         )
 
