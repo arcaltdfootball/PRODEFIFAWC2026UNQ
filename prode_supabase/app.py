@@ -220,7 +220,7 @@ try:
                 '</div>'
                 '<div class="ganador-premio-box">'
                 f'<div class="ganador-premio">{premio_individual_fmt}</div>'
-                '<div class="ganador-premio-label">le toca</div>'
+                '<div class="ganador-premio-label">OBTIENE</div>'
                 '</div>'
                 '</div>'
                 '</div>'
