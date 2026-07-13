@@ -1,8 +1,6 @@
-import json
-import os
-
 import streamlit as st
 from database import conectar
+from escudos_map import url_escudo
 
 st.set_page_config(
     page_title="Resultados",
@@ -159,73 +157,11 @@ except Exception as e:
     st.error(f"Error al conectar con la base de datos: {e}")
     st.stop()
 
-# ── Escudos: mapeo entre el nombre "corto" usado en la base (equipos /
-# partidos) y el nombre "lindo" que generó escudos_prode.py en escudos.json ──
-ALIAS_ESCUDOS = {
-    "Boca": "Boca Juniors",
-    "River": "River Plate",
-    "Racing": "Racing Club",
-    "Independiente": "Independiente",
-    "San Lorenzo": "San Lorenzo",
-    "Huracán": "Huracán",
-    "Vélez": "Vélez Sarsfield",
-    "Estudiantes": "Estudiantes (LP)",
-    "Gimnasia": "Gimnasia y Esgrima (LP)",
-    "Newell's": "Newell's Old Boys",
-    "Rosario Central": "Rosario Central",
-    "Talleres": "Talleres (Córdoba)",
-    "Belgrano": "Belgrano (Córdoba)",
-    "Instituto": "Instituto (Córdoba)",
-    "Argentinos": "Argentinos Juniors",
-    "Platense": "Platense",
-    "Banfield": "Banfield",
-    "Lanús": "Lanús",
-    "Tigre": "Tigre",
-    "Barracas Central": "Barracas Central",
-    "Central Córdoba": "Central Córdoba (SdE)",
-    "Independiente Rivadavia": "Independiente Rivadavia",
-    "Gimnasia (Mza.)": "Gimnasia y Esgrima (Mza)",
-    "Deportivo Riestra": "Deportivo Riestra",
-    "Unión": "Unión (Santa Fe)",
-    "Sarmiento": "Sarmiento (Junín)",
-    "Atlético Tucumán": "Atlético Tucumán",
-    "Aldosivi": "Aldosivi",
-    "Estudiantes (Río Cuarto)": "Estudiantes (Río Cuarto)",
-    "Defensa y Justicia": "Defensa y Justicia",
-}
-
-# Posibles ubicaciones del escudos.json generado por escudos_prode.py
-_RUTAS_ESCUDOS_JSON = [
-    "escudos.json",
-    os.path.join(os.path.dirname(__file__), "escudos.json"),
-    os.path.join(os.path.dirname(__file__), "..", "escudos.json"),
-]
-
-
-@st.cache_data(ttl=3600)
-def cargar_escudos_json():
-    for ruta in _RUTAS_ESCUDOS_JSON:
-        try:
-            with open(ruta, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            continue
-    return {}
-
-
-def get_escudo(nombre_equipo: str) -> str | None:
-    """Devuelve la URL del escudo para un nombre de equipo tal como
-    aparece en las tablas 'equipos'/'partidos' (ej. 'Boca', 'River')."""
-    escudos = cargar_escudos_json()
-    if not escudos:
-        return None
-    nombre_lindo = ALIAS_ESCUDOS.get(nombre_equipo, nombre_equipo)
-    dato = escudos.get(nombre_lindo)
-    if isinstance(dato, dict):
-        return dato.get("url")
-    if isinstance(dato, str):
-        return dato
-    return None
+# ── Escudos: se resuelven con escudos_map.py (misma fuente que usa el
+# resto de la app), que a su vez lee el escudos.json generado por
+# escudos_prode.py. get_escudo() queda como alias por compatibilidad con
+# el resto de este archivo.
+get_escudo = url_escudo
 
 
 # ── Carga de partidos (con caché de corta duración) ──────────────────────────
