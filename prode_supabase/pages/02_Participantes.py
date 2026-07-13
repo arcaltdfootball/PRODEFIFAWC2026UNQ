@@ -1,3 +1,4 @@
+import json
 import os
 import secrets
 import string
@@ -23,18 +24,18 @@ st.markdown(
     body { font-family: 'DM Sans', sans-serif; color: #f1f5f9; }
 
     [data-testid="stApp"] {
-        background-image: url('https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/main/prode_supabase/fwcup202603.jpg');
+        background-image: url('https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/main/prode_supabase/FIFAWorldbakcgound.jpg');
         background-size: cover;
-        background-position: center top;
+        background-position: center;
         background-attachment: fixed;
         background-repeat: no-repeat;
-        background-color: #6b0f0f;
+        background-color: #0b0f19;
     }
     [data-testid="stAppViewContainer"] > div:first-child::before {
         content: '';
         position: fixed;
         inset: 0;
-        background: rgba(10, 5, 5, 0.72);
+        background: rgba(11,15,25,0.78);
         z-index: 0;
         pointer-events: none;
     }
@@ -190,6 +191,15 @@ st.markdown(
         box-shadow: 0 0 0 2px rgba(232,201,107,0.2) !important;
     }
 
+    .escudo-img {
+        width: 52px; height: 52px; object-fit: contain;
+        border-radius: 10px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+        background: rgba(255,255,255,0.06);
+        border: 2px solid rgba(255,255,255,0.12);
+        padding: 3px;
+    }
+
     .part-header {
         display: flex;
         align-items: center;
@@ -284,53 +294,127 @@ except Exception as e:
 st.markdown('<div class="titulo-pagina">ADMINISTRACIÓN DE PARTICIPANTES</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ESCUDOS — igual que en 01_Resultados.py
+# ══════════════════════════════════════════════════════════════════════════════
+ALIAS_ESCUDOS = {
+    "Boca": "Boca Juniors",
+    "River": "River Plate",
+    "Racing": "Racing Club",
+    "Independiente": "Independiente",
+    "San Lorenzo": "San Lorenzo",
+    "Huracán": "Huracán",
+    "Vélez": "Vélez Sarsfield",
+    "Estudiantes": "Estudiantes (LP)",
+    "Gimnasia": "Gimnasia y Esgrima (LP)",
+    "Newell's": "Newell's Old Boys",
+    "Rosario Central": "Rosario Central",
+    "Talleres": "Talleres (Córdoba)",
+    "Belgrano": "Belgrano (Córdoba)",
+    "Instituto": "Instituto (Córdoba)",
+    "Argentinos": "Argentinos Juniors",
+    "Platense": "Platense",
+    "Banfield": "Banfield",
+    "Lanús": "Lanús",
+    "Tigre": "Tigre",
+    "Barracas Central": "Barracas Central",
+    "Central Córdoba": "Central Córdoba (SdE)",
+    "Independiente Rivadavia": "Independiente Rivadavia",
+    "Gimnasia (Mza.)": "Gimnasia y Esgrima (Mza)",
+    "Deportivo Riestra": "Deportivo Riestra",
+    "Unión": "Unión (Santa Fe)",
+    "Sarmiento": "Sarmiento (Junín)",
+    "Atlético Tucumán": "Atlético Tucumán",
+    "Aldosivi": "Aldosivi",
+    "Estudiantes (Río Cuarto)": "Estudiantes (Río Cuarto)",
+    "Defensa y Justicia": "Defensa y Justicia",
+}
+
+_RUTAS_ESCUDOS_JSON = [
+    "escudos.json",
+    os.path.join(os.path.dirname(__file__), "escudos.json"),
+    os.path.join(os.path.dirname(__file__), "..", "escudos.json"),
+]
+
+
+@st.cache_data(ttl=3600)
+def cargar_escudos_json():
+    for ruta in _RUTAS_ESCUDOS_JSON:
+        try:
+            with open(ruta, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+    return {}
+
+
+def get_escudo_url(nombre_equipo: str) -> str | None:
+    """Devuelve la URL del escudo para un nombre de equipo (ej. 'Boca', 'River')."""
+    escudos = cargar_escudos_json()
+    if not escudos:
+        return None
+    nombre_lindo = ALIAS_ESCUDOS.get(nombre_equipo, nombre_equipo)
+    dato = escudos.get(nombre_lindo)
+    if isinstance(dato, dict):
+        return dato.get("url")
+    if isinstance(dato, str):
+        return dato
+    return None
+
+
+def get_escudo_img(nombre_equipo: str, size: int = 52) -> str:
+    """Devuelve HTML con el escudo del equipo (img o placeholder)."""
+    url = get_escudo_url(nombre_equipo)
+    if url:
+        return f'<img src="{url}" class="escudo-img" width="{size}" height="{size}">'
+    inicial = nombre_equipo[0].upper() if nombre_equipo else "?"
+    return (
+        f'<div style="width:{size}px;height:{size}px;border-radius:10px;'
+        f'background:#1e2840;color:#e8c96b;display:inline-flex;'
+        f'align-items:center;justify-content:center;'
+        f"font-family:'Bebas Neue';font-size:{size // 2}px;"
+        f'border:2px solid rgba(255,255,255,0.12);">{inicial}</div>'
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # HELPERS DE CONTRASEÑA
 # ══════════════════════════════════════════════════════════════════════════════
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "aleotero")
 
 
 def _hash_pwd(pwd: str) -> str:
-    """SHA-256 para almacenar contraseñas."""
     return hashlib.sha256(pwd.encode()).hexdigest()
 
 
 def generar_password(largo: int = 8) -> str:
-    """Genera contraseña aleatoria legible."""
     chars = string.ascii_letters + string.digits
     return "".join(secrets.choice(chars) for _ in range(largo))
 
 
 def generar_username(nombre: str) -> str:
-    """Username a partir del nombre (sin espacios, minúsculas)."""
     base = nombre.strip().lower().replace(" ", "_")
     base = "".join(c for c in base if c.isalnum() or c == "_")
     return base or "user"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CANDADO GLOBAL DE ACCESO — bloquea/habilita el ingreso de todos los participantes
-# (se guarda en Supabase para que afecte a todas las sesiones, no solo al navegador
-# del admin)
+# CANDADO GLOBAL DE ACCESO
 # ══════════════════════════════════════════════════════════════════════════════
 def obtener_acceso_bloqueado() -> bool:
-    """Consulta en la base si el acceso de participantes está bloqueado."""
     try:
         res = sb.table("configuracion_app").select("acceso_bloqueado").eq("id", 1).execute()
         if res.data:
             return bool(res.data[0].get("acceso_bloqueado", False))
-        # Si no existe la fila todavía, la creamos con el valor por defecto (desbloqueado)
         try:
             sb.table("configuracion_app").upsert({"id": 1, "acceso_bloqueado": False}).execute()
         except Exception:
             pass
         return False
     except Exception:
-        # Si la tabla todavía no fue creada en Supabase, asumimos acceso habilitado
         return False
 
 
 def set_acceso_bloqueado(valor: bool) -> bool:
-    """Actualiza el estado global de bloqueo. Devuelve True si se guardó con éxito."""
     try:
         sb.table("configuracion_app").upsert({"id": 1, "acceso_bloqueado": valor}).execute()
         return True
@@ -430,7 +514,6 @@ with st.sidebar:
         )
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ── Candado global: bloquea/habilita el ingreso de todos los participantes ──
         if acceso_bloqueado:
             st.markdown(
                 '<div style="text-align:center;margin-bottom:6px;">'
@@ -506,9 +589,7 @@ else:
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# INDICADOR + CONTROL DEL CANDADO GLOBAL — grande y visible, tipo semáforo
-# (para el admin queda también acá, en el cuerpo principal, por si tiene el
-# sidebar cerrado en el celular)
+# INDICADOR + CONTROL DEL CANDADO GLOBAL
 # ══════════════════════════════════════════════════════════════════════════════
 if acceso_bloqueado:
     st.markdown(
@@ -572,65 +653,6 @@ if es_admin:
                 st.rerun()
     st.markdown("<br>", unsafe_allow_html=True)
 
-# ── FLAGS ──────────────────────────────────────────────────────────────────────
-FLAGS = {
-    "Alemania":              "https://hatscripts.github.io/circle-flags/flags/de.svg",
-    "Arabia Saudi":          "https://hatscripts.github.io/circle-flags/flags/sa.svg",
-    "Argelia":               "https://hatscripts.github.io/circle-flags/flags/dz.svg",
-    "Argentina":             "https://hatscripts.github.io/circle-flags/flags/ar.svg",
-    "Australia":             "https://hatscripts.github.io/circle-flags/flags/au.svg",
-    "Austria":               "https://hatscripts.github.io/circle-flags/flags/at.svg",
-    "Belgica":               "https://hatscripts.github.io/circle-flags/flags/be.svg",
-    "Bélgica":               "https://hatscripts.github.io/circle-flags/flags/be.svg",
-    "Bosnia":                "https://hatscripts.github.io/circle-flags/flags/ba.svg",
-    "Bosnia y Herzegovina":  "https://hatscripts.github.io/circle-flags/flags/ba.svg",
-    "Brasil":                "https://hatscripts.github.io/circle-flags/flags/br.svg",
-    "Cabo Verde":            "https://hatscripts.github.io/circle-flags/flags/cv.svg",
-    "Canada":                "https://hatscripts.github.io/circle-flags/flags/ca.svg",
-    "Canadá":                "https://hatscripts.github.io/circle-flags/flags/ca.svg",
-    "Catar":                 "https://hatscripts.github.io/circle-flags/flags/qa.svg",
-    "Colombia":              "https://hatscripts.github.io/circle-flags/flags/co.svg",
-    "Costa de Marfil":       "https://hatscripts.github.io/circle-flags/flags/ci.svg",
-    "Croacia":               "https://hatscripts.github.io/circle-flags/flags/hr.svg",
-    "Curazao":               "https://hatscripts.github.io/circle-flags/flags/cw.svg",
-    "Ecuador":               "https://hatscripts.github.io/circle-flags/flags/ec.svg",
-    "EE. UU.":               "https://hatscripts.github.io/circle-flags/flags/us.svg",
-    "Egipto":                "https://hatscripts.github.io/circle-flags/flags/eg.svg",
-    "Escocia":               "https://hatscripts.github.io/circle-flags/flags/gb-sct.svg",
-    "Espana":                "https://hatscripts.github.io/circle-flags/flags/es.svg",
-    "España":                "https://hatscripts.github.io/circle-flags/flags/es.svg",
-    "Estados Unidos":        "https://hatscripts.github.io/circle-flags/flags/us.svg",
-    "Francia":               "https://hatscripts.github.io/circle-flags/flags/fr.svg",
-    "Ghana":                 "https://hatscripts.github.io/circle-flags/flags/gh.svg",
-    "Haiti":                 "https://hatscripts.github.io/circle-flags/flags/ht.svg",
-    "Inglaterra":            "https://hatscripts.github.io/circle-flags/flags/gb-eng.svg",
-    "Irak":                  "https://hatscripts.github.io/circle-flags/flags/iq.svg",
-    "Iran":                  "https://hatscripts.github.io/circle-flags/flags/ir.svg",
-    "RI de Iran":            "https://hatscripts.github.io/circle-flags/flags/ir.svg",
-    "Japon":                 "https://hatscripts.github.io/circle-flags/flags/jp.svg",
-    "Jordania":              "https://hatscripts.github.io/circle-flags/flags/jo.svg",
-    "Marruecos":             "https://hatscripts.github.io/circle-flags/flags/ma.svg",
-    "Mexico":                "https://hatscripts.github.io/circle-flags/flags/mx.svg",
-    "México":                "https://hatscripts.github.io/circle-flags/flags/mx.svg",
-    "Noruega":               "https://hatscripts.github.io/circle-flags/flags/no.svg",
-    "Nueva Zelanda":         "https://hatscripts.github.io/circle-flags/flags/nz.svg",
-    "Paises Bajos":          "https://hatscripts.github.io/circle-flags/flags/nl.svg",
-    "Panama":                "https://hatscripts.github.io/circle-flags/flags/pa.svg",
-    "Paraguay":              "https://hatscripts.github.io/circle-flags/flags/py.svg",
-    "Portugal":              "https://hatscripts.github.io/circle-flags/flags/pt.svg",
-    "RD Congo":              "https://hatscripts.github.io/circle-flags/flags/cd.svg",
-    "Republica Checa":       "https://hatscripts.github.io/circle-flags/flags/cz.svg",
-    "Republica de Corea":    "https://hatscripts.github.io/circle-flags/flags/kr.svg",
-    "Senegal":               "https://hatscripts.github.io/circle-flags/flags/sn.svg",
-    "Sudafrica":             "https://hatscripts.github.io/circle-flags/flags/za.svg",
-    "Suecia":                "https://hatscripts.github.io/circle-flags/flags/se.svg",
-    "Suiza":                 "https://hatscripts.github.io/circle-flags/flags/ch.svg",
-    "Tunez":                 "https://hatscripts.github.io/circle-flags/flags/tn.svg",
-    "Turquia":               "https://hatscripts.github.io/circle-flags/flags/tr.svg",
-    "Uruguay":               "https://hatscripts.github.io/circle-flags/flags/uy.svg",
-    "Uzbekistan":            "https://hatscripts.github.io/circle-flags/flags/uz.svg",
-}
-
 
 def avatar_html_from_bytes(foto_bytes, nombre, size=65, font_size=24, border=2):
     if foto_bytes:
@@ -652,66 +674,7 @@ def avatar_html_from_bytes(foto_bytes, nombre, size=65, font_size=24, border=2):
     )
 
 
-def get_iniciales_pais(nombre, largo=3):
-    """Devuelve un código corto para el país: el código ISO de la bandera si existe
-    (ej. 'AR', 'BR'), o si no, las primeras letras del nombre en mayúsculas."""
-    if not nombre:
-        return "?"
-    url = FLAGS.get(nombre) or FLAGS.get(nombre.strip())
-    if url:
-        # ej: ".../flags/ar.svg" -> "AR"   |   ".../flags/gb-eng.svg" -> "ENG"
-        codigo = url.rsplit("/", 1)[-1].replace(".svg", "")
-        if "-" in codigo:
-            codigo = codigo.split("-", 1)[1]
-        return codigo.upper()[:largo]
-    limpio = "".join(c for c in nombre if c.isalpha())
-    return limpio.upper()[:largo] if limpio else "?"
-
-
-def get_flag_img(nombre, size=48):
-    if not nombre:
-        return '<span style="font-size:' + str(size) + 'px;line-height:1;display:block;text-align:center;">🏳️</span>'
-    nombre = nombre.strip()
-    url = FLAGS.get(nombre) or FLAGS.get(nombre.strip())
-    if url:
-        return (
-            '<img src="' + url + '" width="' + str(size) + '" height="' + str(size) + '" '
-            'style="border-radius:50%;border:2px solid rgba(255,255,255,0.2);'
-            'object-fit:cover;display:block;" />'
-        )
-    # Placeholder compuesto: "Francia / Suecia" → dos banderas superpuestas
-    if " / " in nombre:
-        partes = [p.strip() for p in nombre.split(" / ")]
-        imgs = []
-        for p in partes[:2]:
-            u = FLAGS.get(p) or FLAGS.get(p.strip())
-            if u:
-                imgs.append(u)
-        if imgs:
-            sz_small = max(int(size * 0.68), 20)
-            offset = sz_small // 3
-            if len(imgs) == 2:
-                return (
-                    '<div style="position:relative;width:' + str(size) + 'px;height:' + str(size) + 'px;display:block;">'
-                    '<img src="' + imgs[0] + '" width="' + str(sz_small) + '" height="' + str(sz_small) + '" '
-                    'style="border-radius:50%;border:2px solid rgba(255,255,255,0.25);'
-                    'position:absolute;top:0;left:0;object-fit:cover;" />'
-                    '<img src="' + imgs[1] + '" width="' + str(sz_small) + '" height="' + str(sz_small) + '" '
-                    'style="border-radius:50%;border:2px solid rgba(255,255,255,0.25);'
-                    'position:absolute;bottom:0;right:0;object-fit:cover;" />'
-                    '</div>'
-                )
-            else:
-                return (
-                    '<img src="' + imgs[0] + '" width="' + str(size) + '" height="' + str(size) + '" '
-                    'style="border-radius:50%;border:2px solid rgba(255,255,255,0.2);'
-                    'object-fit:cover;display:block;" />'
-                )
-    return '<span style="font-size:' + str(size) + 'px;line-height:1;display:block;text-align:center;">🏳️</span>'
-
-
 def puede_editar(p_id: int) -> bool:
-    """True si la sesión activa puede editar la boleta de p_id."""
     if es_admin:
         return True
     if acceso_bloqueado:
@@ -734,7 +697,6 @@ def guardar_pron(p_id, partido_id, nuevo_val, gol_local=None, gol_visitante=None
             .execute()
         )
         if nuevo_val:
-            # Si no me pasaron los goles por separado, los deduzco del string "N-M"
             if gol_local is None or gol_visitante is None:
                 try:
                     partes_gv = str(nuevo_val).split("-")
@@ -790,7 +752,6 @@ if es_admin:
                 username_gen = generar_username(nombre_nuevo)
                 password_gen = generar_password(8)
 
-                # Garantizar unicidad del username
                 existing = sb.table("participantes").select("id").eq("username", username_gen).execute()
                 if existing.data:
                     username_gen = username_gen + "_" + generar_password(3).lower()
@@ -838,7 +799,7 @@ if es_admin:
                     LIMPIAR LISTA DE PARTICIPANTES
                 </div>
                 <div style="font-size:11px;color:#94a3b8;margin-top:3px;">
-                    Elimina todos los participantes inscriptos y sus pronósticos (grupos y dieciseisavos).
+                    Elimina todos los participantes inscriptos y sus pronósticos.
                     Esta acción no se puede deshacer.
                 </div>
             </div>
@@ -870,13 +831,10 @@ if es_admin:
             if st.button("✓ Sí, borrar todo", key="btn_reset_all_confirm",
                          use_container_width=True, type="primary"):
                 try:
-                    # Borrar pronósticos primero (FK), luego participantes
                     sb.table("pronosticos").delete().neq("id", 0).execute()
-                    sb.table("pronosticos_dieciseisavos").delete().neq("id", 0).execute()
                     sb.table("participantes").delete().neq("id", 0).execute()
-                    # Limpiar session_state relacionado
                     for k in list(st.session_state.keys()):
-                        if any(k.startswith(p) for p in ["gl_", "gv_", "gl16_", "gv16_",
+                        if any(k.startswith(p) for p in ["gl_", "gv_",
                                                           "part_expandido", "confirmar_eliminar",
                                                           "editando_participante"]):
                             del st.session_state[k]
@@ -893,6 +851,54 @@ if es_admin:
                 st.rerun()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CARGA DE PARTIDOS (con caché) — usa columnas de Liga Profesional
+# ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=30)
+def cargar_partidos():
+    return (
+        conectar()
+        .table("partidos")
+        .select("id, equipo_local, equipo_visitante, zona, fecha_numero, fecha_partido, hora, estadio")
+        .execute()
+        .data
+    )
+
+
+try:
+    todos_partidos = cargar_partidos()
+except Exception as e:
+    st.error(
+        "No se pudo leer la tabla 'partidos' desde Supabase.\n\n"
+        "Causas más comunes:\n"
+        "- La tabla no existe todavía o está vacía.\n"
+        "- Row Level Security (RLS) está activado sin policy de SELECT para 'anon'.\n\n"
+        f"Detalle técnico: {e}"
+    )
+    st.stop()
+
+if not todos_partidos:
+    st.info("No hay partidos cargados en la base de datos.")
+    st.stop()
+
+# ── Agrupar por zona y, dentro de cada zona, por fecha_numero ────────────────
+partidos_por_zona: dict = {}
+for p in todos_partidos:
+    z = p["zona"]
+    partidos_por_zona.setdefault(z, {})
+    f = p["fecha_numero"]
+    partidos_por_zona[z].setdefault(f, [])
+    partidos_por_zona[z][f].append(p)
+
+zonas_disponibles = sorted(
+    partidos_por_zona.keys(),
+    key=lambda z: (0 if z == "A" else 1 if z == "B" else 2, z)
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LISTA DE PARTICIPANTES
+# ══════════════════════════════════════════════════════════════════════════════
 resp_p = sb.table("participantes").select("id, nombre, foto, username").order("nombre").execute()
 participantes = resp_p.data
 
@@ -1089,660 +1095,368 @@ for numero, p in enumerate(participantes_filtrados, start=1):
             unsafe_allow_html=True
         )
 
-        resp_todos = sb.table("partidos").select("id, local, visitante, fecha, grupo").order("grupo").order("fecha").execute()
-        todos_partidos = resp_todos.data
+        # ── Pronósticos del participante (todos) ──────────────────────────────
+        resp_pron = (
+            sb.table("pronosticos")
+            .select("partido_id, pronostico")
+            .eq("participante_id", p_id)
+            .execute()
+        )
+        pron_dict = {r["partido_id"]: r["pronostico"] for r in resp_pron.data}
 
-        # ── Selector de fase: Grupos / Dieciseisavos ────────────────────────
-        key_fase = "fase_boleta_" + str(p_id)
-        if key_fase not in st.session_state:
-            st.session_state[key_fase] = "grupos"
+        # ── Selector de zona ──────────────────────────────────────────────────
+        key_zona = "zona_boleta_" + str(p_id)
+        if key_zona not in st.session_state:
+            st.session_state[key_zona] = zonas_disponibles[0]
 
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            if st.button("📋 Fase de Grupos", key="fboleta_grupos_" + str(p_id),
-                         use_container_width=True,
-                         type="primary" if st.session_state[key_fase] == "grupos" else "secondary"):
-                st.session_state[key_fase] = "grupos"
-                st.rerun()
-        with col_f2:
-            if st.button("🏆8vos de FInal", key="fboleta_16_" + str(p_id),
-                         use_container_width=True,
-                         type="primary" if st.session_state[key_fase] == "dieciseisavos" else "secondary"):
-                st.session_state[key_fase] = "dieciseisavos"
-                st.rerun()
+        cols_zona = st.columns(len(zonas_disponibles))
+        for i, z in enumerate(zonas_disponibles):
+            with cols_zona[i]:
+                es_activa = st.session_state[key_zona] == z
+                etiqueta_z = "Interzonal" if z == "Interzonal" else f"Zona {z}"
+                if st.button(
+                    etiqueta_z,
+                    key=f"zona_boleta_{p_id}_{z}",
+                    use_container_width=True,
+                    type="primary" if es_activa else "secondary"
+                ):
+                    st.session_state[key_zona] = z
+                    # Resetear índice de fecha al cambiar de zona
+                    st.session_state.pop(f"fecha_boleta_{p_id}_{z}", None)
+                    st.rerun()
 
-        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        zona_sel = st.session_state[key_zona]
+        etiqueta_zona_lbl = "INTERZONAL" if zona_sel == "Interzonal" else f"ZONA {zona_sel}"
+        st.markdown(
+            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1rem;color:#e8c96b;'
+            f'text-align:center;letter-spacing:3px;margin-bottom:10px;">{etiqueta_zona_lbl}</div>',
+            unsafe_allow_html=True
+        )
 
-        # ══════════════════════════════════════════════════════════════════
-        # BOLETA — FASE DE GRUPOS
-        # ══════════════════════════════════════════════════════════════════
-        if st.session_state[key_fase] == "grupos":
-            if not todos_partidos:
-                st.info("No hay partidos cargados en la base de datos.")
-            else:
-                grupos_dict = {}
-                for pt in todos_partidos:
-                    grp = pt["grupo"]
-                    grupos_dict.setdefault(grp, [])
-                    grupos_dict[grp].append((pt["id"], pt["local"], pt["visitante"], pt["fecha"]))
+        # ── Partidos de la zona seleccionada agrupados por fecha ─────────────
+        fechas_zona = sorted(partidos_por_zona.get(zona_sel, {}).keys(), key=int)
+        if not fechas_zona:
+            st.info("No hay partidos en esta zona.")
+        else:
+            key_fecha = f"fecha_boleta_{p_id}_{zona_sel}"
+            if key_fecha not in st.session_state:
+                st.session_state[key_fecha] = fechas_zona[0]
+            if st.session_state[key_fecha] not in fechas_zona:
+                st.session_state[key_fecha] = fechas_zona[0]
 
-                ORDEN = list("ABCDEFGHIJKL")
-                grupos_ordenados = [g for g in ORDEN if g in grupos_dict]
-                for g in sorted(grupos_dict.keys()):
-                    if g not in grupos_ordenados:
-                        grupos_ordenados.append(g)
-
-                resp_pron = (
-                    sb.table("pronosticos")
-                    .select("partido_id, pronostico")
-                    .eq("participante_id", p_id)
-                    .execute()
+            # ── Selector de fecha (jornada) ───────────────────────────────────
+            def prog_fecha(f):
+                pts_f = partidos_por_zona[zona_sel].get(f, [])
+                comp = sum(
+                    1 for pt in pts_f
+                    if pt["id"] in pron_dict
+                    and pron_dict[pt["id"]]
+                    and "-" in str(pron_dict[pt["id"]])
                 )
-                pron_dict = {r["partido_id"]: r["pronostico"] for r in resp_pron.data}
+                return comp, len(pts_f)
 
-                key_grp  = "grp_sel_" + str(p_id)
-                key_part = "part_idx_" + str(p_id)
-                if key_grp  not in st.session_state:
-                    st.session_state[key_grp]  = grupos_ordenados[0]
-                if key_part not in st.session_state:
-                    st.session_state[key_part] = 0
+            n_fechas = len(fechas_zona)
+            cols_f = st.columns(min(n_fechas, 8))
+            for i, f in enumerate(fechas_zona):
+                with cols_f[i % len(cols_f)]:
+                    activo_f = st.session_state[key_fecha] == f
+                    comp_f, tot_f = prog_fecha(f)
+                    completo_f = comp_f == tot_f
+                    if activo_f:
+                        borde_f, bg_f, color_f = "#e8c96b", "rgba(232,201,107,0.12)", "#e8c96b"
+                    elif completo_f:
+                        borde_f, bg_f, color_f = "#22c55e", "rgba(34,197,94,0.07)", "#4ade80"
+                    else:
+                        borde_f, bg_f, color_f = "rgba(255,255,255,0.12)", "rgba(255,255,255,0.03)", "#94a3b8"
 
-                def prog_grupo(g):
-                    pts = grupos_dict.get(g, [])
-                    comp = sum(
-                        1 for (pid2, *_) in pts
-                        if pid2 in pron_dict and pron_dict[pid2] and "-" in str(pron_dict[pid2])
-                    )
-                    return comp, len(pts)
-
-                n_grp = len(grupos_ordenados)
-                cols_grp = st.columns(n_grp)
-                for i, grp in enumerate(grupos_ordenados):
-                    with cols_grp[i]:
-                        activo = st.session_state[key_grp] == grp
-                        comp_g, tot_g = prog_grupo(grp)
-                        completo = comp_g == tot_g
-                        if activo:
-                            borde, bg, color_letra = "#e8c96b", "rgba(232,201,107,0.12)", "#e8c96b"
-                        elif completo:
-                            borde, bg, color_letra = "#22c55e", "rgba(34,197,94,0.07)", "#4ade80"
-                        else:
-                            borde, bg, color_letra = "rgba(255,255,255,0.12)", "rgba(255,255,255,0.03)", "#94a3b8"
-
-                        st.markdown(
-                            '<div style="background:' + bg + ';border:2px solid ' + borde + ';border-radius:10px;'
-                            'padding:6px 4px 5px 4px;text-align:center;margin-bottom:-8px;">'
-                            '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:18px;'
-                            'color:' + color_letra + ';letter-spacing:1px;line-height:1.1;">' + grp + '</div>'
-                            '<div style="font-size:9px;color:#64748b;font-family:\'DM Sans\',sans-serif;'
-                            'margin-top:1px;">' + str(comp_g) + '/' + str(tot_g) + '</div>'
-                            '</div>',
-                            unsafe_allow_html=True
-                        )
-                        if st.button("‎", key="grp_" + str(p_id) + "_" + grp, use_container_width=True,
-                                     help="Grupo " + grp + "  (" + str(comp_g) + "/" + str(tot_g) + " pronósticos)"):
-                            if st.session_state[key_grp] != grp:
-                                st.session_state[key_grp]  = grp
-                                st.session_state[key_part] = 0
-                            st.rerun()
-
-                grupo_sel    = st.session_state[key_grp]
-                partidos_grp = grupos_dict.get(grupo_sel, [])
-                total_g      = len(partidos_grp)
-
-                idx = min(st.session_state[key_part], total_g - 1)
-                st.session_state[key_part] = idx
-
-                comp_sel, _ = prog_grupo(grupo_sel)
-                st.markdown(
-                    '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:17px;'
-                    'color:#e8c96b;letter-spacing:2px;margin:14px 0 6px 0;">'
-                    'GRUPO ' + grupo_sel +
-                    ' <span style="font-size:12px;color:#94a3b8;font-family:\'DM Sans\',sans-serif;font-weight:400;">'
-                    '· ' + str(comp_sel) + '/' + str(total_g) + ' pronósticos</span></div>',
-                    unsafe_allow_html=True
-                )
-
-                col_prev, col_ind, col_next = st.columns([1, 4, 1])
-                with col_prev:
-                    if st.button("◀", key="prev_" + str(p_id), use_container_width=True, disabled=(idx == 0)):
-                        st.session_state[key_part] = idx - 1
-                        st.rerun()
-                with col_ind:
                     st.markdown(
-                        '<div style="text-align:center;font-family:\'DM Sans\',sans-serif;'
-                        'font-size:13px;color:#94a3b8;padding-top:8px;">'
-                        'Partido <strong style="color:#fff;">' + str(idx + 1) + '</strong> de ' + str(total_g) + '</div>',
+                        f'<div style="background:{bg_f};border:2px solid {borde_f};border-radius:10px;'
+                        f'padding:6px 4px 5px 4px;text-align:center;margin-bottom:-8px;">'
+                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:15px;'
+                        f'color:{color_f};letter-spacing:1px;line-height:1.1;">F{f}</div>'
+                        f'<div style="font-size:9px;color:#64748b;font-family:\'DM Sans\',sans-serif;'
+                        f'margin-top:1px;">{comp_f}/{tot_f}</div>'
+                        f'</div>',
                         unsafe_allow_html=True
                     )
-                with col_next:
-                    if st.button("▶", key="next_" + str(p_id), use_container_width=True, disabled=(idx == total_g - 1)):
-                        st.session_state[key_part] = idx + 1
+                    if st.button("‎", key=f"fecha_{p_id}_{zona_sel}_{f}", use_container_width=True,
+                                 help=f"Fecha {f}  ({comp_f}/{tot_f} pronósticos)"):
+                        if st.session_state[key_fecha] != f:
+                            st.session_state[key_fecha] = f
+                            st.session_state.pop(f"part_idx_{p_id}_{zona_sel}_{f}", None)
                         st.rerun()
 
-                dots_inner = ""
-                for n in range(total_g):
-                    if n == idx:
-                        dots_inner += "<div style='width:20px;height:6px;border-radius:3px;background:#e8c96b'></div>"
-                    else:
-                        dots_inner += "<div style='width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.15)'></div>"
-                st.markdown('<div class="dots-row-clickable">' + dots_inner + '</div>', unsafe_allow_html=True)
+            fecha_sel = st.session_state[key_fecha]
+            comp_sel, _ = prog_fecha(fecha_sel)
+            partidos_fecha = sorted(
+                partidos_por_zona[zona_sel].get(fecha_sel, []),
+                key=lambda x: (x.get("fecha_partido") or "9999-99-99", x.get("hora") or "99:99")
+            )
+            total_f = len(partidos_fecha)
 
-                # ── Selector directo de partido ──
-                with st.expander("🔢 Ir directamente a un partido", expanded=False):
-                    n_cols_g = 2
-                    filas_g = (total_g + n_cols_g - 1) // n_cols_g
-                    for fila in range(filas_g):
-                        cols_sel_g = st.columns(n_cols_g)
-                        for c in range(n_cols_g):
-                            n = fila * n_cols_g + c
-                            if n >= total_g:
-                                continue
-                            with cols_sel_g[c]:
-                                partido_n_id, local_n, visitante_n, _fecha_n = partidos_grp[n]
-                                tiene_pron_g = (
-                                    partido_n_id in pron_dict
-                                    and pron_dict[partido_n_id]
-                                    and "-" in str(pron_dict[partido_n_id])
-                                )
-                                ini_l_g = get_iniciales_pais(local_n)
-                                ini_v_g = get_iniciales_pais(visitante_n)
-                                icono_sel_g = "✅" if tiene_pron_g else "⬜"
-                                if st.button(
-                                    icono_sel_g + " " + ini_l_g + " vs " + ini_v_g,
-                                    key="seldirecto_" + str(p_id) + "_" + str(n),
-                                    use_container_width=True,
-                                    type="primary" if n == idx else "secondary",
-                                    help="Ir al partido " + str(n + 1) + ": " + local_n + " vs " + visitante_n,
-                                ):
-                                    st.session_state[key_part] = n
-                                    st.rerun()
+            st.markdown(
+                f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:17px;'
+                f'color:#e8c96b;letter-spacing:2px;margin:14px 0 6px 0;">'
+                f'FECHA {fecha_sel}'
+                f' <span style="font-size:12px;color:#94a3b8;font-family:\'DM Sans\',sans-serif;font-weight:400;">'
+                f'· {comp_sel}/{total_f} pronósticos</span></div>',
+                unsafe_allow_html=True
+            )
 
-                partido_id, local, visitante, fecha = partidos_grp[idx]
-                valor_actual = pron_dict.get(partido_id)
+            key_idx = f"part_idx_{p_id}_{zona_sel}_{fecha_sel}"
+            if key_idx not in st.session_state:
+                st.session_state[key_idx] = 0
+            idx = min(st.session_state[key_idx], total_f - 1)
+            st.session_state[key_idx] = idx
 
-                img_local = get_flag_img(local, size=52)
-                img_visit = get_flag_img(visitante, size=52)
-
-                goles_local_guardado = None
-                goles_visit_guardado = None
-                if valor_actual and "-" in str(valor_actual):
-                    partes = str(valor_actual).split("-")
-                    try:
-                        goles_local_guardado = int(partes[0])
-                        goles_visit_guardado = int(partes[1])
-                    except ValueError:
-                        pass
-
-                if goles_local_guardado is not None and goles_visit_guardado is not None:
-                    gl = goles_local_guardado
-                    gv = goles_visit_guardado
-                    if gl > gv:
-                        signo = "1"; color_b = "#4ade80"; bg_b = "rgba(34,197,94,0.2)"; label_b = "✅ Gana " + local
-                    elif gl == gv:
-                        signo = "X"; color_b = "#e8c96b"; bg_b = "rgba(232,201,107,0.18)"; label_b = "✅ Empate"
-                    else:
-                        signo = "2"; color_b = "#f87171"; bg_b = "rgba(239,68,68,0.2)"; label_b = "✅ Gana " + visitante
-                    badge = (
-                        '<span style="background:' + bg_b + ';color:' + color_b + ';'
-                        'border-radius:20px;padding:3px 14px;font-size:12px;font-weight:700;">'
-                        + label_b + ' · ' + signo + '</span>'
-                    )
-                    score_html = (
-                        '<div class="score-box-wrap">'
-                        '<div style="text-align:center;">'
-                        '<div class="score-box">' + str(gl) + '</div>'
-                        '<div class="score-label">' + local[:10] + '</div>'
-                        '</div>'
-                        '<div class="score-dash">-</div>'
-                        '<div style="text-align:center;">'
-                        '<div class="score-box">' + str(gv) + '</div>'
-                        '<div class="score-label">' + visitante[:10] + '</div>'
-                        '</div>'
-                        '</div>'
-                    )
-                else:
-                    badge = (
-                        '<span style="background:rgba(100,116,139,0.18);color:#64748b;'
-                        'border-radius:20px;padding:3px 14px;font-size:12px;">'
-                        '— Sin pronóstico</span>'
-                    )
-                    score_html = (
-                        '<div class="score-box-wrap">'
-                        '<div style="text-align:center;">'
-                        '<div class="score-box empty">?</div>'
-                        '<div class="score-label">' + local[:10] + '</div>'
-                        '</div>'
-                        '<div class="score-dash">-</div>'
-                        '<div style="text-align:center;">'
-                        '<div class="score-box empty">?</div>'
-                        '<div class="score-label">' + visitante[:10] + '</div>'
-                        '</div>'
-                        '</div>'
-                    )
-
+            # ── Navegación entre partidos de la fecha ─────────────────────────
+            col_prev, col_ind, col_next = st.columns([1, 4, 1])
+            with col_prev:
+                if st.button("◀", key=f"prev_{p_id}_{zona_sel}_{fecha_sel}", use_container_width=True,
+                             disabled=(idx == 0)):
+                    st.session_state[key_idx] = idx - 1
+                    st.rerun()
+            with col_ind:
                 st.markdown(
-                    '<div class="card-partido">'
-                    '<div class="card-partido-meta">📅 ' + str(fecha) + '</div>'
-                    '<div class="card-partido-vs-row">'
-                    '<div class="card-equipo">' + img_local + '<div class="card-nombre-equipo">' + local + '</div></div>'
-                    '<div class="card-vs">VS</div>'
-                    '<div class="card-equipo">' + img_visit + '<div class="card-nombre-equipo">' + visitante + '</div></div>'
+                    f'<div style="text-align:center;font-family:\'DM Sans\',sans-serif;'
+                    f'font-size:13px;color:#94a3b8;padding-top:8px;">'
+                    f'Partido <strong style="color:#fff;">{idx + 1}</strong> de {total_f}</div>',
+                    unsafe_allow_html=True
+                )
+            with col_next:
+                if st.button("▶", key=f"next_{p_id}_{zona_sel}_{fecha_sel}", use_container_width=True,
+                             disabled=(idx == total_f - 1)):
+                    st.session_state[key_idx] = idx + 1
+                    st.rerun()
+
+            dots_inner = ""
+            for n in range(total_f):
+                if n == idx:
+                    dots_inner += "<div style='width:20px;height:6px;border-radius:3px;background:#e8c96b'></div>"
+                else:
+                    dots_inner += "<div style='width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.15)'></div>"
+            st.markdown('<div class="dots-row-clickable">' + dots_inner + '</div>', unsafe_allow_html=True)
+
+            # ── Selector directo de partido ───────────────────────────────────
+            with st.expander("🔢 Ir directamente a un partido", expanded=False):
+                n_cols_f = 2
+                filas_f = (total_f + n_cols_f - 1) // n_cols_f
+                for fila in range(filas_f):
+                    cols_sel_f = st.columns(n_cols_f)
+                    for c in range(n_cols_f):
+                        n = fila * n_cols_f + c
+                        if n >= total_f:
+                            continue
+                        with cols_sel_f[c]:
+                            pt_n = partidos_fecha[n]
+                            tiene_pron = (
+                                pt_n["id"] in pron_dict
+                                and pron_dict[pt_n["id"]]
+                                and "-" in str(pron_dict[pt_n["id"]])
+                            )
+                            ini_l = (pt_n["equipo_local"] or "")[:6].upper()
+                            ini_v = (pt_n["equipo_visitante"] or "")[:6].upper()
+                            icono_sel = "✅" if tiene_pron else "⬜"
+                            if st.button(
+                                icono_sel + " " + ini_l + " vs " + ini_v,
+                                key=f"seldirecto_{p_id}_{zona_sel}_{fecha_sel}_{n}",
+                                use_container_width=True,
+                                type="primary" if n == idx else "secondary",
+                                help=f"Ir al partido {n + 1}: {pt_n['equipo_local']} vs {pt_n['equipo_visitante']}",
+                            ):
+                                st.session_state[key_idx] = n
+                                st.rerun()
+
+            # ── Tarjeta del partido actual ────────────────────────────────────
+            partido_actual = partidos_fecha[idx]
+            partido_id  = partido_actual["id"]
+            local       = partido_actual["equipo_local"]
+            visitante   = partido_actual["equipo_visitante"]
+            fecha_ptdo  = partido_actual.get("fecha_partido")
+            hora_ptdo   = partido_actual.get("hora")
+            estadio_ptdo = partido_actual.get("estadio")
+
+            valor_actual = pron_dict.get(partido_id)
+            goles_local_guardado = None
+            goles_visit_guardado = None
+            if valor_actual and "-" in str(valor_actual):
+                partes = str(valor_actual).split("-")
+                try:
+                    goles_local_guardado = int(partes[0])
+                    goles_visit_guardado = int(partes[1])
+                except ValueError:
+                    pass
+
+            img_local = get_escudo_img(local, size=52)
+            img_visit = get_escudo_img(visitante, size=52)
+
+            # Meta del partido
+            meta_parts = []
+            if fecha_ptdo:
+                meta_parts.append('<i class="ti ti-calendar-event"></i> ' + str(fecha_ptdo))
+            if hora_ptdo:
+                meta_parts.append('<i class="ti ti-clock"></i> ' + str(hora_ptdo))
+            if estadio_ptdo:
+                meta_parts.append('<i class="ti ti-map-pin"></i> ' + str(estadio_ptdo))
+            meta_str = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(meta_parts) if meta_parts else "A confirmar"
+
+            if goles_local_guardado is not None and goles_visit_guardado is not None:
+                gl = goles_local_guardado
+                gv = goles_visit_guardado
+                if gl > gv:
+                    signo = "1"; color_b = "#4ade80"; bg_b = "rgba(34,197,94,0.2)"; label_b = "✅ Gana " + local
+                elif gl == gv:
+                    signo = "X"; color_b = "#e8c96b"; bg_b = "rgba(232,201,107,0.18)"; label_b = "✅ Empate"
+                else:
+                    signo = "2"; color_b = "#f87171"; bg_b = "rgba(239,68,68,0.2)"; label_b = "✅ Gana " + visitante
+                badge = (
+                    '<span style="background:' + bg_b + ';color:' + color_b + ';'
+                    'border-radius:20px;padding:3px 14px;font-size:12px;font-weight:700;">'
+                    + label_b + ' · ' + signo + '</span>'
+                )
+                score_html = (
+                    '<div class="score-box-wrap">'
+                    '<div style="text-align:center;">'
+                    '<div class="score-box">' + str(gl) + '</div>'
+                    '<div class="score-label">' + local[:10] + '</div>'
                     '</div>'
-                    + score_html +
-                    '<div style="text-align:center;margin-top:8px;">' + badge + '</div>'
-                    '</div>',
-                    unsafe_allow_html=True
-                )
-
-                if editable:
-                    st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
-
-                    key_gl = "gl_" + str(p_id) + "_" + str(partido_id)
-                    key_gv = "gv_" + str(p_id) + "_" + str(partido_id)
-
-                    if key_gl not in st.session_state:
-                        st.session_state[key_gl] = goles_local_guardado if goles_local_guardado is not None else 0
-                    if key_gv not in st.session_state:
-                        st.session_state[key_gv] = goles_visit_guardado if goles_visit_guardado is not None else 0
-
-                    if goles_local_guardado is not None:
-                        if st.session_state[key_gl] != goles_local_guardado and partido_id not in st.session_state.get("_dirty_" + str(p_id), set()):
-                            st.session_state[key_gl] = goles_local_guardado
-                    if goles_visit_guardado is not None:
-                        if st.session_state[key_gv] != goles_visit_guardado and partido_id not in st.session_state.get("_dirty_" + str(p_id), set()):
-                            st.session_state[key_gv] = goles_visit_guardado
-
-                    col_inp_l, col_guion, col_inp_v, col_guardar_m, col_del2 = st.columns([3, 1, 3, 3, 1])
-
-                    with col_inp_l:
-                        st.markdown(
-                            '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:2px;">'
-                            + local[:14] + '</div>',
-                            unsafe_allow_html=True
-                        )
-                        gl_val = st.number_input(
-                            "⚽ " + local, min_value=0, max_value=20,
-                            value=st.session_state[key_gl],
-                            key=key_gl, label_visibility="collapsed"
-                        )
-
-                    with col_guion:
-                        st.markdown(
-                            '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:28px;'
-                            'color:#e8c96b;text-align:center;padding-top:28px;line-height:1;">-</div>',
-                            unsafe_allow_html=True
-                        )
-
-                    with col_inp_v:
-                        st.markdown(
-                            '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:2px;">'
-                            + visitante[:14] + '</div>',
-                            unsafe_allow_html=True
-                        )
-                        gv_val = st.number_input(
-                            "⚽ " + visitante, min_value=0, max_value=20,
-                            value=st.session_state[key_gv],
-                            key=key_gv, label_visibility="collapsed"
-                        )
-
-                    with col_guardar_m:
-                        st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
-                        marcador_nuevo = str(gl_val) + "-" + str(gv_val)
-                        ya_guardado = (marcador_nuevo == valor_actual)
-                        tipo_btn = "primary" if not ya_guardado else "secondary"
-                        lbl_btn  = "✅ Guardado" if ya_guardado else "💾 Guardar"
-                        if st.button(lbl_btn, key="save_m_" + str(p_id) + "_" + str(partido_id),
-                                     use_container_width=True, type=tipo_btn, disabled=ya_guardado):
-                            if guardar_pron(p_id, partido_id, marcador_nuevo, gl_val, gv_val):
-                                st.toast("✅ Pronóstico guardado: " + marcador_nuevo, icon="⚽")
-                                st.rerun()
-
-                    with col_del2:
-                        st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
-                        if st.button("🗑️", key="del_" + str(p_id) + "_" + str(partido_id),
-                                     help="Borrar pronóstico",
-                                     use_container_width=True):
-                            sb.table("pronosticos").delete()\
-                                .eq("participante_id", p_id)\
-                                .eq("partido_id", partido_id)\
-                                .execute()
-                            st.session_state[key_gl] = 0
-                            st.session_state[key_gv] = 0
-                            st.toast("Pronóstico borrado.", icon="🗑️")
-                            st.rerun()
-
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    _, col_reset = st.columns([3, 1])
-                    with col_reset:
-                        if st.button("🗑️ Resetear Boleta", key="reset_total_" + str(p_id),
-                                     use_container_width=True,
-                                     help="Borra todos los pronósticos de grupos de este participante"):
-                            sb.table("pronosticos").delete().eq("participante_id", p_id).execute()
-                            st.toast("Boleta de " + p_nom + " reseteada.", icon="🔄")
-                            st.rerun()
-
-                else:
-                    st.markdown(
-                        '<div style="background:rgba(100,116,139,0.1);border:1px solid rgba(100,116,139,0.2);'
-                        'border-radius:10px;padding:10px 16px;text-align:center;margin-top:8px;">'
-                        '<span style="font-size:12px;color:#64748b;">'
-                        '🔒 Iniciá sesión como <strong>' + p_nom + '</strong> para modificar esta boleta'
-                        '</span></div>',
-                        unsafe_allow_html=True
-                    )
-
-        # ══════════════════════════════════════════════════════════════════
-        # BOLETA — DIECISEISAVOS DE FINAL
-        # ══════════════════════════════════════════════════════════════════
-        elif st.session_state[key_fase] == "dieciseisavos":
-            resp_16 = sb.table("dieciseisavos").select("*").order("partido_num").execute()
-            cruces_16 = resp_16.data
-
-            if not cruces_16:
-                st.info("Todavía no se cargaron los cruces de Dieciseisavos de Final.")
-            else:
-                resp_pron_16 = (
-                    sb.table("pronosticos_dieciseisavos")
-                    .select("cruce_id, pronostico")
-                    .eq("participante_id", p_id)
-                    .execute()
-                )
-                pron_dict_16 = {r["cruce_id"]: r["pronostico"] for r in resp_pron_16.data}
-
-                key_idx16 = "idx16_" + str(p_id)
-                if key_idx16 not in st.session_state:
-                    st.session_state[key_idx16] = 0
-
-                total_16 = len(cruces_16)
-                idx16 = min(st.session_state[key_idx16], total_16 - 1)
-                st.session_state[key_idx16] = idx16
-
-                comp_16 = sum(
-                    1 for c in cruces_16
-                    if c["id"] in pron_dict_16 and pron_dict_16[c["id"]] and "-" in str(pron_dict_16[c["id"]])
-                )
-                st.markdown(
-                    '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:17px;'
-                    'color:#e8c96b;letter-spacing:2px;margin:14px 0 6px 0;">'
-                    'DIECISEISAVOS DE FINAL'
-                    ' <span style="font-size:12px;color:#94a3b8;font-family:\'DM Sans\',sans-serif;font-weight:400;">'
-                    '· ' + str(comp_16) + '/' + str(total_16) + ' pronósticos</span></div>',
-                    unsafe_allow_html=True
-                )
-
-                col_prev16, col_ind16, col_next16 = st.columns([1, 4, 1])
-                with col_prev16:
-                    if st.button("◀", key="prev16_" + str(p_id), use_container_width=True, disabled=(idx16 == 0)):
-                        st.session_state[key_idx16] = idx16 - 1
-                        st.rerun()
-                with col_ind16:
-                    st.markdown(
-                        '<div style="text-align:center;font-family:\'DM Sans\',sans-serif;'
-                        'font-size:13px;color:#94a3b8;padding-top:8px;">'
-                        'Cruce <strong style="color:#fff;">' + str(idx16 + 1) + '</strong> de ' + str(total_16) + '</div>',
-                        unsafe_allow_html=True
-                    )
-                with col_next16:
-                    if st.button("▶", key="next16_" + str(p_id), use_container_width=True, disabled=(idx16 == total_16 - 1)):
-                        st.session_state[key_idx16] = idx16 + 1
-                        st.rerun()
-
-                dots_inner16 = ""
-                for n in range(total_16):
-                    if n == idx16:
-                        dots_inner16 += "<div style='width:20px;height:6px;border-radius:3px;background:#e8c96b'></div>"
-                    else:
-                        dots_inner16 += "<div style='width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.15)'></div>"
-                st.markdown('<div class="dots-row-clickable">' + dots_inner16 + '</div>', unsafe_allow_html=True)
-
-                # ── Selector directo de cruce — sábana vertical ──
-                st.markdown(
-                    '<div style="font-size:11px;color:#94a3b8;letter-spacing:1px;'
-                    'text-transform:uppercase;margin:10px 0 4px 0;">🔢 Ir a un cruce:</div>',
-                    unsafe_allow_html=True
-                )
-                for n in range(total_16):
-                    cruce_n   = cruces_16[n]
-                    nom_l_n   = cruce_n.get("equipo_local") or cruce_n.get("origen_local") or cruce_n.get("grupo_local") or "Por definir"
-                    nom_v_n   = cruce_n.get("equipo_visitante") or cruce_n.get("origen_visitante") or cruce_n.get("grupo_visitante") or "Por definir"
-                    ini_l_n   = get_iniciales_pais(nom_l_n)
-                    ini_v_n   = get_iniciales_pais(nom_v_n)
-                    tiene_16n = (
-                        cruce_n["id"] in pron_dict_16
-                        and pron_dict_16[cruce_n["id"]]
-                        and "-" in str(pron_dict_16[cruce_n["id"]])
-                    )
-                    icono_n   = "✅" if tiene_16n else "⬜"
-                    fecha_n   = cruce_n.get("fecha", "")
-                    label_n   = icono_n + "  " + ini_l_n + " vs " + ini_v_n + ("  · " + fecha_n if fecha_n else "")
-                    if st.button(
-                        label_n,
-                        key="seldirecto16_" + str(p_id) + "_" + str(n),
-                        use_container_width=True,
-                        type="primary" if n == idx16 else "secondary",
-                        help=nom_l_n + " vs " + nom_v_n,
-                    ):
-                        st.session_state[key_idx16] = n
-                        st.rerun()
-
-                c_actual = cruces_16[idx16]
-                cruce_id = c_actual["id"]
-                nombre_local = c_actual.get("equipo_local") or c_actual.get("origen_local") or c_actual.get("grupo_local") or "Por definir"
-                nombre_visit = c_actual.get("equipo_visitante") or c_actual.get("origen_visitante") or c_actual.get("grupo_visitante") or "Por definir"
-                es_placeholder_16 = not (
-                    c_actual.get("equipo_local")
-                    or c_actual.get("origen_local")
-                    or c_actual.get("grupo_local")
-                )
-
-                img_local16 = get_flag_img(nombre_local, size=52)
-                img_visit16 = get_flag_img(nombre_visit, size=52)
-
-                valor_actual_16 = pron_dict_16.get(cruce_id)
-                gl16_guardado, gv16_guardado = None, None
-                if valor_actual_16 and "-" in str(valor_actual_16):
-                    partes16 = str(valor_actual_16).split("-")
-                    try:
-                        gl16_guardado = int(partes16[0])
-                        gv16_guardado = int(partes16[1])
-                    except ValueError:
-                        pass
-
-                if gl16_guardado is not None and gv16_guardado is not None:
-                    if gl16_guardado > gv16_guardado:
-                        badge16 = (
-                            '<span style="background:rgba(34,197,94,0.2);color:#4ade80;'
-                            'border-radius:20px;padding:3px 14px;font-size:12px;font-weight:700;">'
-                            '✅ Avanza ' + nombre_local + '</span>'
-                        )
-                    elif gv16_guardado > gl16_guardado:
-                        badge16 = (
-                            '<span style="background:rgba(239,68,68,0.2);color:#f87171;'
-                            'border-radius:20px;padding:3px 14px;font-size:12px;font-weight:700;">'
-                            '✅ Avanza ' + nombre_visit + '</span>'
-                        )
-                    else:
-                        badge16 = (
-                            '<span style="background:rgba(232,201,107,0.18);color:#e8c96b;'
-                            'border-radius:20px;padding:3px 14px;font-size:12px;font-weight:700;">'
-                            '✅ Empate (120\')</span>'
-                        )
-                    score_html16 = (
-                        '<div class="score-box-wrap">'
-                        '<div style="text-align:center;"><div class="score-box">' + str(gl16_guardado) + '</div>'
-                        '<div class="score-label">' + nombre_local[:10] + '</div></div>'
-                        '<div class="score-dash">-</div>'
-                        '<div style="text-align:center;"><div class="score-box">' + str(gv16_guardado) + '</div>'
-                        '<div class="score-label">' + nombre_visit[:10] + '</div></div>'
-                        '</div>'
-                    )
-                else:
-                    badge16 = (
-                        '<span style="background:rgba(100,116,139,0.18);color:#64748b;'
-                        'border-radius:20px;padding:3px 14px;font-size:12px;">'
-                        '— Sin pronóstico</span>'
-                    )
-                    score_html16 = (
-                        '<div class="score-box-wrap">'
-                        '<div style="text-align:center;"><div class="score-box empty">?</div>'
-                        '<div class="score-label">' + nombre_local[:10] + '</div></div>'
-                        '<div class="score-dash">-</div>'
-                        '<div style="text-align:center;"><div class="score-box empty">?</div>'
-                        '<div class="score-label">' + nombre_visit[:10] + '</div></div>'
-                        '</div>'
-                    )
-
-                # Meta info del cruce
-                meta_fecha = c_actual.get("fecha", "")
-                meta_hora  = c_actual.get("hora", "")
-                meta_sede  = c_actual.get("sede", "")
-                meta_line1 = "🏆 Partido " + str(c_actual.get("partido_num", ""))
-                meta_line2_parts = []
-                if meta_fecha:
-                    meta_line2_parts.append("📅 " + meta_fecha)
-                if meta_hora:
-                    meta_line2_parts.append("🕐 " + meta_hora + " (ARG)")
-                if meta_sede:
-                    meta_line2_parts.append("📍 " + meta_sede)
-                meta_line2 = "  &nbsp;·&nbsp;  ".join(meta_line2_parts)
-
-                st.markdown(
-                    '<div class="card-partido">'
-                    '<div class="card-partido-meta">' + meta_line1 + '</div>'
-                    + ('<div class="card-partido-meta" style="font-size:10px;margin-top:-6px;margin-bottom:8px;">' + meta_line2 + '</div>' if meta_line2 else '') +
-                    '<div class="card-partido-vs-row">'
-                    '<div class="card-equipo">' + img_local16 + '<div class="card-nombre-equipo">' + nombre_local + '</div></div>'
-                    '<div class="card-vs">VS</div>'
-                    '<div class="card-equipo">' + img_visit16 + '<div class="card-nombre-equipo">' + nombre_visit + '</div></div>'
+                    '<div class="score-dash">-</div>'
+                    '<div style="text-align:center;">'
+                    '<div class="score-box">' + str(gv) + '</div>'
+                    '<div class="score-label">' + visitante[:10] + '</div>'
                     '</div>'
-                    + score_html16 +
-                    '<div style="text-align:center;margin-top:8px;">' + badge16 + '</div>'
-                    '</div>',
-                    unsafe_allow_html=True
+                    '</div>'
+                )
+            else:
+                badge = (
+                    '<span style="background:rgba(100,116,139,0.18);color:#64748b;'
+                    'border-radius:20px;padding:3px 14px;font-size:12px;">'
+                    '— Sin pronóstico</span>'
+                )
+                score_html = (
+                    '<div class="score-box-wrap">'
+                    '<div style="text-align:center;">'
+                    '<div class="score-box empty">?</div>'
+                    '<div class="score-label">' + local[:10] + '</div>'
+                    '</div>'
+                    '<div class="score-dash">-</div>'
+                    '<div style="text-align:center;">'
+                    '<div class="score-box empty">?</div>'
+                    '<div class="score-label">' + visitante[:10] + '</div>'
+                    '</div>'
+                    '</div>'
                 )
 
-                if editable and not es_placeholder_16:
-                    key_gl16 = "gl16_inp_" + str(p_id) + "_" + str(cruce_id)
-                    key_gv16 = "gv16_inp_" + str(p_id) + "_" + str(cruce_id)
-                    if key_gl16 not in st.session_state:
-                        st.session_state[key_gl16] = gl16_guardado if gl16_guardado is not None else 0
-                    if key_gv16 not in st.session_state:
-                        st.session_state[key_gv16] = gv16_guardado if gv16_guardado is not None else 0
+            st.markdown(
+                '<div class="card-partido">'
+                '<div class="card-partido-meta">' + meta_str + '</div>'
+                '<div class="card-partido-vs-row">'
+                '<div class="card-equipo">' + img_local + '<div class="card-nombre-equipo">' + local + '</div></div>'
+                '<div class="card-vs">VS</div>'
+                '<div class="card-equipo">' + img_visit + '<div class="card-nombre-equipo">' + visitante + '</div></div>'
+                '</div>'
+                + score_html +
+                '<div style="text-align:center;margin-top:8px;">' + badge + '</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
 
-                    col_il, col_g, col_iv, col_sm, col_d = st.columns([3, 1, 3, 3, 1])
-                    with col_il:
-                        st.markdown(
-                            '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:2px;">'
-                            + nombre_local[:14] + '</div>',
-                            unsafe_allow_html=True
-                        )
-                        gl16_val = st.number_input(
-                            "⚽ " + nombre_local, min_value=0, max_value=20,
-                            value=st.session_state[key_gl16], key=key_gl16, label_visibility="collapsed"
-                        )
-                    with col_g:
-                        st.markdown(
-                            '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:28px;'
-                            'color:#e8c96b;text-align:center;padding-top:28px;line-height:1;">-</div>',
-                            unsafe_allow_html=True
-                        )
-                    with col_iv:
-                        st.markdown(
-                            '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:2px;">'
-                            + nombre_visit[:14] + '</div>',
-                            unsafe_allow_html=True
-                        )
-                        gv16_val = st.number_input(
-                            "⚽ " + nombre_visit, min_value=0, max_value=20,
-                            value=st.session_state[key_gv16], key=key_gv16, label_visibility="collapsed"
-                        )
-                    with col_sm:
-                        st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
-                        marcador_nuevo16 = str(gl16_val) + "-" + str(gv16_val)
-                        ya_guardado16 = (marcador_nuevo16 == valor_actual_16)
-                        tipo_btn16 = "primary" if not ya_guardado16 else "secondary"
-                        lbl_btn16  = "✅ Guardado" if ya_guardado16 else "💾 Guardar"
-                        if st.button(lbl_btn16, key="save16_" + str(p_id) + "_" + str(cruce_id),
-                                     use_container_width=True, type=tipo_btn16, disabled=ya_guardado16):
-                            try:
-                                existente16 = (
-                                    sb.table("pronosticos_dieciseisavos")
-                                    .select("id")
-                                    .eq("participante_id", p_id)
-                                    .eq("cruce_id", cruce_id)
-                                    .execute()
-                                )
-                                if existente16.data:
-                                    resp_save16 = sb.table("pronosticos_dieciseisavos")\
-                                        .update({"pronostico": marcador_nuevo16})\
-                                        .eq("id", existente16.data[0]["id"]).execute()
-                                else:
-                                    resp_save16 = sb.table("pronosticos_dieciseisavos").insert({
-                                        "participante_id": p_id,
-                                        "cruce_id":        cruce_id,
-                                        "pronostico":      marcador_nuevo16,
-                                    }).execute()
-                                if not resp_save16.data:
-                                    st.error("No se pudo guardar. Verificá los permisos RLS en pronosticos_dieciseisavos.")
-                                else:
-                                    st.toast("✅ Pronóstico guardado: " + marcador_nuevo16, icon="🏆")
-                                    st.rerun()
-                            except Exception as e:
-                                st.error("Error al guardar: " + str(e))
-                    with col_d:
-                        st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
-                        if st.button("🗑️", key="deldieci_" + str(p_id) + "_" + str(cruce_id),
-                                     help="Borrar pronóstico de este cruce", use_container_width=True):
-                            try:
-                                sb.table("pronosticos_dieciseisavos").delete()\
-                                    .eq("participante_id", p_id)\
-                                    .eq("cruce_id", cruce_id)\
-                                    .execute()
-                                # Limpiar session_state para que se reinicie con 0
-                                for k in [key_gl16, key_gv16]:
-                                    if k in st.session_state:
-                                        del st.session_state[k]
-                                st.toast("Pronóstico borrado.", icon="🗑️")
-                                st.rerun()
-                            except Exception as e:
-                                st.error("Error al borrar: " + str(e))
+            # ── Inputs de edición ─────────────────────────────────────────────
+            if editable:
+                st.markdown('<div style="height:6px;"></div>', unsafe_allow_html=True)
 
-                    # ── Resetear boleta completa de dieciseisavos ──────────────
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    _, col_reset16 = st.columns([3, 1])
-                    with col_reset16:
-                        if st.button("🗑️ Resetear 8vos", key="reset_16_" + str(p_id),
-                                     use_container_width=True,
-                                     help="Borra todos los pronósticos de Dieciseisavos de este participante"):
-                            try:
-                                sb.table("pronosticos_dieciseisavos").delete()\
-                                    .eq("participante_id", p_id).execute()
-                                # Limpiar todas las keys de session_state de esta sección
-                                for k in list(st.session_state.keys()):
-                                    if k.startswith("gl16_inp_" + str(p_id)) or k.startswith("gv16_inp_" + str(p_id)):
-                                        del st.session_state[k]
-                                st.toast("Boleta de 8vos de " + p_nom + " reseteada.", icon="🔄")
-                                st.rerun()
-                            except Exception as e:
-                                st.error("Error al resetear: " + str(e))
+                key_gl = "gl_" + str(p_id) + "_" + str(partido_id)
+                key_gv = "gv_" + str(p_id) + "_" + str(partido_id)
 
-                elif es_placeholder_16:
+                if key_gl not in st.session_state:
+                    st.session_state[key_gl] = goles_local_guardado if goles_local_guardado is not None else 0
+                if key_gv not in st.session_state:
+                    st.session_state[key_gv] = goles_visit_guardado if goles_visit_guardado is not None else 0
+
+                if goles_local_guardado is not None:
+                    if st.session_state[key_gl] != goles_local_guardado and partido_id not in st.session_state.get("_dirty_" + str(p_id), set()):
+                        st.session_state[key_gl] = goles_local_guardado
+                if goles_visit_guardado is not None:
+                    if st.session_state[key_gv] != goles_visit_guardado and partido_id not in st.session_state.get("_dirty_" + str(p_id), set()):
+                        st.session_state[key_gv] = goles_visit_guardado
+
+                col_inp_l, col_guion, col_inp_v, col_guardar_m, col_del2 = st.columns([3, 1, 3, 3, 1])
+
+                with col_inp_l:
                     st.markdown(
-                        '<div style="background:rgba(100,116,139,0.1);border:1px solid rgba(100,116,139,0.2);'
-                        'border-radius:10px;padding:10px 16px;text-align:center;margin-top:8px;">'
-                        '<span style="font-size:12px;color:#64748b;">'
-                        '⏳ Este cruce todavía no tiene equipos confirmados</span></div>',
+                        '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:2px;">'
+                        + local[:14] + '</div>',
                         unsafe_allow_html=True
                     )
-                else:
+                    gl_val = st.number_input(
+                        "⚽ " + local, min_value=0, max_value=20,
+                        value=st.session_state[key_gl],
+                        key=key_gl, label_visibility="collapsed"
+                    )
+
+                with col_guion:
                     st.markdown(
-                        '<div style="background:rgba(100,116,139,0.1);border:1px solid rgba(100,116,139,0.2);'
-                        'border-radius:10px;padding:10px 16px;text-align:center;margin-top:8px;">'
-                        '<span style="font-size:12px;color:#64748b;">'
-                        '🔒 Iniciá sesión como <strong>' + p_nom + '</strong> para modificar esta boleta'
-                        '</span></div>',
+                        '<div style="font-family:\'Bebas Neue\',sans-serif;font-size:28px;'
+                        'color:#e8c96b;text-align:center;padding-top:28px;line-height:1;">-</div>',
                         unsafe_allow_html=True
                     )
+
+                with col_inp_v:
+                    st.markdown(
+                        '<div style="font-size:11px;color:#94a3b8;text-align:center;margin-bottom:2px;">'
+                        + visitante[:14] + '</div>',
+                        unsafe_allow_html=True
+                    )
+                    gv_val = st.number_input(
+                        "⚽ " + visitante, min_value=0, max_value=20,
+                        value=st.session_state[key_gv],
+                        key=key_gv, label_visibility="collapsed"
+                    )
+
+                with col_guardar_m:
+                    st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
+                    marcador_nuevo = str(gl_val) + "-" + str(gv_val)
+                    ya_guardado = (marcador_nuevo == valor_actual)
+                    tipo_btn = "primary" if not ya_guardado else "secondary"
+                    lbl_btn  = "✅ Guardado" if ya_guardado else "💾 Guardar"
+                    if st.button(lbl_btn, key="save_m_" + str(p_id) + "_" + str(partido_id),
+                                 use_container_width=True, type=tipo_btn, disabled=ya_guardado):
+                        if guardar_pron(p_id, partido_id, marcador_nuevo, gl_val, gv_val):
+                            st.toast("✅ Pronóstico guardado: " + marcador_nuevo, icon="⚽")
+                            st.rerun()
+
+                with col_del2:
+                    st.markdown('<div style="height:26px;"></div>', unsafe_allow_html=True)
+                    if st.button("🗑️", key="del_" + str(p_id) + "_" + str(partido_id),
+                                 help="Borrar pronóstico",
+                                 use_container_width=True):
+                        sb.table("pronosticos").delete()\
+                            .eq("participante_id", p_id)\
+                            .eq("partido_id", partido_id)\
+                            .execute()
+                        st.session_state[key_gl] = 0
+                        st.session_state[key_gv] = 0
+                        st.toast("Pronóstico borrado.", icon="🗑️")
+                        st.rerun()
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                _, col_reset = st.columns([3, 1])
+                with col_reset:
+                    if st.button("🗑️ Resetear Boleta", key="reset_total_" + str(p_id),
+                                 use_container_width=True,
+                                 help="Borra todos los pronósticos de este participante"):
+                        sb.table("pronosticos").delete().eq("participante_id", p_id).execute()
+                        st.toast("Boleta de " + p_nom + " reseteada.", icon="🔄")
+                        st.rerun()
+
+            else:
+                st.markdown(
+                    '<div style="background:rgba(100,116,139,0.1);border:1px solid rgba(100,116,139,0.2);'
+                    'border-radius:10px;padding:10px 16px;text-align:center;margin-top:8px;">'
+                    '<span style="font-size:12px;color:#64748b;">'
+                    '🔒 Iniciá sesión como <strong>' + p_nom + '</strong> para modificar esta boleta'
+                    '</span></div>',
+                    unsafe_allow_html=True
+                )
 
 st.markdown("<br>", unsafe_allow_html=True)
