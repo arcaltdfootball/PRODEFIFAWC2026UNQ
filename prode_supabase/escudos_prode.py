@@ -128,16 +128,24 @@ def main():
                 print(f"  -> No se encontró imagen para {nombre_lindo}")
                 continue
 
-            extension = url.split(".")[-1].split("?")[0]
-            nombre_archivo = f"{slugify(nombre_lindo)}.{extension}"
-            ruta_destino = os.path.join(OUTPUT_DIR, nombre_archivo)
+            # Lo único que necesita la app es la URL: la guardamos ya mismo,
+            # así el JSON queda completo aunque falle la descarga local.
+            resultado[nombre_lindo] = {"url": url, "archivo_local": None}
+            print(f"  -> URL OK: {url}")
 
-            descargar_archivo(url, ruta_destino)
-            resultado[nombre_lindo] = {
-                "url": url,
-                "archivo_local": ruta_destino,
-            }
-            print(f"  -> OK: {url}")
+            # Descarga local best-effort (respaldo, NO la usa la app).
+            # Si el CDN de imágenes de Wikimedia bloquea el pedido (403 u
+            # otro error), no pasa nada: seguimos con el resto de equipos.
+            try:
+                extension = url.split(".")[-1].split("?")[0]
+                nombre_archivo = f"{slugify(nombre_lindo)}.{extension}"
+                ruta_destino = os.path.join(OUTPUT_DIR, nombre_archivo)
+                descargar_archivo(url, ruta_destino)
+                resultado[nombre_lindo]["archivo_local"] = ruta_destino
+                print(f"     (respaldo local guardado en {ruta_destino})")
+            except requests.RequestException as e_dl:
+                status = getattr(getattr(e_dl, "response", None), "status_code", "sin respuesta")
+                print(f"     (no se pudo guardar el respaldo local, status {status} — no afecta a la app)")
 
         except requests.RequestException as e:
             status = getattr(getattr(e, "response", None), "status_code", "sin respuesta")
@@ -149,9 +157,8 @@ def main():
     with open(JSON_PATH, "w", encoding="utf-8") as f:
         json.dump(resultado, f, ensure_ascii=False, indent=2)
 
-    print(f"\nListo. {len(resultado)}/{len(EQUIPOS)} escudos descargados.")
-    print(f"Carpeta: {OUTPUT_DIR}/")
-    print(f"JSON con links: {JSON_PATH}")
+    print(f"\nListo. {len(resultado)}/{len(EQUIPOS)} URLs de escudos guardadas en {JSON_PATH}.")
+    print(f"Carpeta de respaldo local: {OUTPUT_DIR}/ (puede estar incompleta, no afecta a la app)")
 
 
 if __name__ == "__main__":
