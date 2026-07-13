@@ -36,7 +36,7 @@ EQUIPOS = {
     "Club de Gimnasia y Esgrima La Plata": "Gimnasia y Esgrima (LP)",
     "Club Atlético Newell's Old Boys": "Newell's Old Boys",
     "Club Atlético Rosario Central": "Rosario Central",
-    "Club Atlético Talleres": "Talleres (Córdoba)",
+    "Club Atlético Talleres (Córdoba)": "Talleres (Córdoba)",
     "Club Atlético Belgrano": "Belgrano (Córdoba)",
     "Instituto Atlético Central Córdoba": "Instituto (Córdoba)",
     "Asociación Atlética Argentinos Juniors": "Argentinos Juniors",
@@ -89,6 +89,10 @@ def obtener_url_escudo(titulo_articulo: str) -> str | None:
     """
     Busca en el artículo de Wikipedia la imagen principal (el escudo del
     club) y devuelve la URL del archivo original (SVG casi siempre).
+
+    Si el artículo no tiene una "imagen principal" detectada automáticamente
+    (pasa en algunos artículos con infoboxes atípicas), busca entre todas
+    las imágenes de la página alguna que parezca un escudo/logo.
     """
     params = {
         "action": "query",
@@ -106,6 +110,51 @@ def obtener_url_escudo(titulo_articulo: str) -> str | None:
         original = pagina.get("original")
         if original:
             return original.get("source")
+
+    # ── Respaldo: listar todas las imágenes de la página y quedarnos con
+    # la primera que parezca un escudo/logo por su nombre de archivo ──
+    return _buscar_imagen_de_respaldo(titulo_articulo)
+
+
+PALABRAS_CLAVE_ESCUDO = ("escudo", "logo", "crest", "badge", "emblema")
+
+
+def _buscar_imagen_de_respaldo(titulo_articulo: str) -> str | None:
+    params = {
+        "action": "query",
+        "titles": titulo_articulo,
+        "prop": "images",
+        "imlimit": "50",
+        "format": "json",
+        "redirects": 1,
+    }
+    resp = requests.get(WIKI_API, params=params, headers=HEADERS, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    paginas = data.get("query", {}).get("pages", {})
+    candidatos = []
+    for pagina in paginas.values():
+        for img in pagina.get("images", []):
+            titulo_archivo = img.get("title", "")
+            if any(palabra in titulo_archivo.lower() for palabra in PALABRAS_CLAVE_ESCUDO):
+                candidatos.append(titulo_archivo)
+
+    for titulo_archivo in candidatos:
+        params_info = {
+            "action": "query",
+            "titles": titulo_archivo,
+            "prop": "imageinfo",
+            "iiprop": "url",
+            "format": "json",
+        }
+        resp2 = requests.get(WIKI_API, params=params_info, headers=HEADERS, timeout=15)
+        resp2.raise_for_status()
+        data2 = resp2.json()
+        paginas2 = data2.get("query", {}).get("pages", {})
+        for pagina2 in paginas2.values():
+            imageinfo = pagina2.get("imageinfo")
+            if imageinfo:
+                return imageinfo[0].get("url")
     return None
 
 
