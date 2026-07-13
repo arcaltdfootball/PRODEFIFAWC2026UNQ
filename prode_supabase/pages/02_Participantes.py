@@ -763,6 +763,7 @@ if es_admin:
                     "password_hash": _hash_pwd(password_gen),
                 }).execute()
 
+                st.cache_data.clear()
                 st.success(
                     f"✅ **{nombre_nuevo.strip()}** agregado con éxito!\n\n"
                     f"🔑 **Usuario:** `{username_gen}`\n\n"
@@ -833,6 +834,7 @@ if es_admin:
                 try:
                     sb.table("pronosticos").delete().neq("id", 0).execute()
                     sb.table("participantes").delete().neq("id", 0).execute()
+                    st.cache_data.clear()
                     for k in list(st.session_state.keys()):
                         if any(k.startswith(p) for p in ["gl_", "gv_",
                                                           "part_expandido", "confirmar_eliminar",
@@ -899,8 +901,11 @@ zonas_disponibles = sorted(
 # ══════════════════════════════════════════════════════════════════════════════
 # LISTA DE PARTICIPANTES
 # ══════════════════════════════════════════════════════════════════════════════
-resp_p = sb.table("participantes").select("id, nombre, foto, username").order("nombre").execute()
-participantes = resp_p.data
+@st.cache_data(ttl=5)
+def cargar_participantes():
+    return conectar().table("participantes").select("id, nombre, foto, username").order("nombre").execute().data
+
+participantes = cargar_participantes()
 
 if not participantes:
     st.info("Aún no se han registrado participantes.")
@@ -1005,6 +1010,7 @@ for numero, p in enumerate(participantes_filtrados, start=1):
                     if st.button("✓", key="confirm_del_" + str(p_id), use_container_width=True):
                         sb.table("pronosticos").delete().eq("participante_id", p_id).execute()
                         sb.table("participantes").delete().eq("id", p_id).execute()
+                        st.cache_data.clear()
                         st.session_state.confirmar_eliminar = None
                         if st.session_state.part_expandido == p_id:
                             st.session_state.part_expandido = None
@@ -1052,6 +1058,7 @@ for numero, p in enumerate(participantes_filtrados, start=1):
                     update_data["foto"] = base64.b64encode(foto_bytes_new).decode()
                 if update_data:
                     sb.table("participantes").update(update_data).eq("id", p_id).execute()
+                    st.cache_data.clear()
                     st.toast("✅ Participante actualizado.", icon="✅")
                 st.session_state.editando_participante = None
                 st.rerun()
