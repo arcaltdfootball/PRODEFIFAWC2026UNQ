@@ -572,16 +572,44 @@ with tab_resultados:
                                     )
 
                                     filas_afectadas = resp_update.data or []
-                                    if not filas_afectadas:
+
+                                    # Verificación real: traer el registro fresco (sin caché)
+                                    # y comparar, porque .data puede venir vacío aunque el
+                                    # UPDATE sí se haya aplicado en la base (gotcha conocido
+                                    # de supabase-py con el header Prefer/representation).
+                                    verificacion = (
+                                        sb.table("partidos")
+                                        .select("id, goles_local, goles_visitante, estado")
+                                        .eq("id", p["id"])
+                                        .execute()
+                                        .data
+                                    )
+                                    fila_real = verificacion[0] if verificacion else None
+                                    realmente_actualizado = (
+                                        fila_real is not None
+                                        and fila_real.get("goles_local") == int(gl_new)
+                                        and fila_real.get("goles_visitante") == int(gv_new)
+                                    )
+
+                                    if not filas_afectadas and not realmente_actualizado:
                                         st.error(
-                                            "⚠️ El UPDATE se ejecutó pero no modificó ninguna fila. "
-                                            "Esto normalmente pasa cuando Supabase tiene RLS (Row Level "
-                                            "Security) activado en la tabla 'partidos' y la SUPABASE_KEY "
-                                            "usada (anon/public) no tiene permiso de UPDATE. "
-                                            "Solución: usar la SUPABASE_KEY de tipo 'service_role' en los "
-                                            "secrets, o agregar una policy de UPDATE para el rol anon."
+                                            "⚠️ Verifiqué con un SELECT fresco después del UPDATE y el "
+                                            "valor en la base sigue siendo el viejo. El UPDATE NO se "
+                                            "aplicó de verdad (no es solo un tema de respuesta vacía).\n\n"
+                                            f"Fila encontrada en la base: `{fila_real}`\n\n"
+                                            "Con service_role esto descarta RLS. Revisar: "
+                                            "¿el 'id' que usa esta fila realmente existe en la tabla? "
+                                            "¿hay un trigger en 'partidos' que revierte el cambio? "
+                                            "¿la app está apuntando a otro proyecto/URL de Supabase "
+                                            "distinto al que estás mirando en el dashboard?"
                                         )
                                         st.stop()
+                                    elif not filas_afectadas and realmente_actualizado:
+                                        st.info(
+                                            "ℹ️ El UPDATE sí se aplicó en la base (confirmado con SELECT "
+                                            "fresco), solo que la respuesta de Supabase no traía las filas "
+                                            "en `.data`. Sigo con el guardado normalmente."
+                                        )
 
                                     # Recalcular puntos de pronósticos de este partido
                                     if gl_new > gv_new:   signo_r = "1"
