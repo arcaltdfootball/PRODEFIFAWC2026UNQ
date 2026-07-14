@@ -6,13 +6,37 @@ Cambios:
   - Admin puede resetear (borrar) la lista completa de participantes
   - Resultado se guarda como 1/X/2 y se refleja en 01_Resultados.py
 """
+import base64
 import hashlib
+import json
+import os
 import secrets
 import string
 
 import streamlit as st
 from database import conectar
 from escudos_map import url_escudo
+
+
+def _rol_de_supabase_key():
+    """Decodifica el JWT de SUPABASE_KEY (sin validar firma) solo para
+    mostrar el campo 'role' (anon / service_role) y así diagnosticar
+    a simple vista qué key está usando realmente la app en este momento."""
+    key = os.environ.get("SUPABASE_KEY", "")
+    if not key:
+        try:
+            key = st.secrets.get("SUPABASE_KEY", "")
+        except Exception:
+            key = ""
+    if not key or key.count(".") != 2:
+        return None, None
+    try:
+        payload_b64 = key.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)  # padding
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return payload.get("role"), key[-6:]
+    except Exception:
+        return None, key[-6:] if key else None
 
 st.set_page_config(page_title="Fixture - Mi Boleta", page_icon="📝", layout="wide")
 
@@ -131,6 +155,13 @@ with st.sidebar:
 
     if st.session_state.es_admin:
         st.markdown('<span class="badge-admin">✅ ADMIN ACTIVO</span>', unsafe_allow_html=True)
+        _rol_key, _tail_key = _rol_de_supabase_key()
+        if _rol_key == "service_role":
+            st.caption(f"🔑 Supabase key activa: `service_role` (…{_tail_key})")
+        elif _rol_key:
+            st.caption(f"⚠️ Supabase key activa: `{_rol_key}` (…{_tail_key}) — NO es service_role")
+        else:
+            st.caption("⚠️ No se pudo leer/decodificar SUPABASE_KEY")
         if st.button("Cerrar sesión", use_container_width=True):
             _cerrar_sesion()
 
