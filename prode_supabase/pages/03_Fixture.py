@@ -539,6 +539,7 @@ with tab_resultados:
                                         sb.table("pronosticos").update({"puntos": pts}).eq("id", pr["id"]).execute()
 
                                     cargar_partidos.clear()
+                                    st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
                                     st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
                                     st.rerun()
                                 except Exception as e:
