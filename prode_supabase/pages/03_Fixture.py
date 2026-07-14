@@ -227,10 +227,9 @@ if not sesion_activa:
 # ══════════════════════════════════════════════════════════════════════════
 # DATOS COMPARTIDOS
 # ══════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=0)
 def cargar_partidos():
     return sb.table("partidos").select("*").execute().data
-
 
 def cargar_pronosticos_de(j_id):
     res = (
