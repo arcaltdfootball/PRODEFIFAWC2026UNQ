@@ -20,18 +20,42 @@ Historial de esta fuente de datos (por qué terminamos acá):
    (Rosario Central, Argentinos Juniors) son archivos JPG/PNG viejos con
    fondo BLANCO sólido en vez de transparente, porque nunca fueron subidos
    como PNG transparente en Commons.
-4) Ahora usamos FootyLogos.com (footylogos.com), que aloja los 30 escudos
-   de la Liga Profesional Argentina en un mismo CDN, en SVG, todos con
-   fondo transparente garantizado y con un patrón de URL consistente y
-   estable. Esto resuelve de raíz los tres problemas anteriores.
+4) Probamos FootyLogos.com (footylogos.com), que en su momento alojaba
+   los 30 escudos de la Liga Profesional Argentina en un mismo CDN, en
+   SVG, con un patrón de URL consistente. PERO footylogos.com cambió su
+   estructura de URLs (ahora usa hashes únicos impredecibles por archivo
+   en otro dominio), así que el patrón "r2.dev/logos/{slug}/..." que
+   habíamos armado dejó de servir nada. Un sitio de terceros con URLs
+   que cambian así no es una base confiable, así que se abandonó.
+5) Volvimos a Wikimedia (Special:FilePath / archivos originales), que
+   funciona bien para 27 de los 30 equipos. Para los 3 que quedaban mal
+   (ver _ESCUDOS_OVERRIDE_PNG más abajo) se usa en cambio el badge PNG
+   de TheSportsDB.com (CDN r2.thesportsdb.com), que resuelve cada caso:
+   - Aldosivi: Wikimedia Commons no tiene el escudo real (la única
+     imagen en Commons es "Bandera de Aldosivi.png", una bandera de
+     600x450 y 294 bytes, no el escudo), por eso no se veía nada.
+   - Argentinos Juniors y Rosario Central: los archivos de Wikimedia
+     son PNG/JPG viejos con fondo BLANCO sólido en vez de transparente.
+     El badge de TheSportsDB para estos dos es PNG con fondo
+     transparente real.
 
 Si en algún momento cambiás/agregás un nombre en el CSV o en otra fuente,
 o querés actualizar una URL, editá el diccionario _ESCUDOS_RAW de acá
 abajo (agregá el/los alias que falten a la lista de nombres de ese
-equipo, o el "slug" si cambia en footylogos.com).
+equipo, o el "slug"/URL si hace falta cambiarlo).
 """
 
 _BASE_URL = "https://pub-3bd35431294c47068cbf31a95d572166.r2.dev/logos/{slug}/{slug}-logo-footylogos.svg"
+
+# Excepciones puntuales: equipos cuya URL "normal" (armada con _BASE_URL a
+# partir del slug) no sirve o tiene problemas de fondo. Para estos casos
+# usamos directamente la URL final del badge PNG de TheSportsDB.com, que
+# tiene fondo transparente garantizado.
+_ESCUDOS_OVERRIDE_PNG = {
+    "aldosivi": "https://r2.thesportsdb.com/images/media/team/badge/nqrjqb1517767667.png",
+    "argentinos-juniors": "https://r2.thesportsdb.com/images/media/team/badge/uqfjuo1769234850.png",
+    "rosario-central": "https://r2.thesportsdb.com/images/media/team/badge/y6q1ds1769660256.png",
+}
 
 # Cada tupla: (slug en footylogos.com, [todos los nombres posibles para ese equipo])
 _ESCUDOS_RAW = [
@@ -69,7 +93,7 @@ _ESCUDOS_RAW = [
 
 # nombre (corto o largo) -> URL del escudo
 ESCUDOS = {
-    nombre: _BASE_URL.format(slug=slug)
+    nombre: _ESCUDOS_OVERRIDE_PNG.get(slug, _BASE_URL.format(slug=slug))
     for slug, nombres in _ESCUDOS_RAW
     for nombre in nombres
 }
