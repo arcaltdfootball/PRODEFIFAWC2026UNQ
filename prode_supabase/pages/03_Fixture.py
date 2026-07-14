@@ -543,6 +543,9 @@ with tab_resultados:
                                 except Exception as e:
                                     st.error(f"Error al guardar: {e}")
                         st.markdown("<hr style='opacity:0.08;'>", unsafe_allow_html=True)
+                                   st.cache_data.clear()  
+                                   st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
+                                   st.rerun()
 
 
 # ── Tab 2: administrar jugadores ──────────────────────────────────────────
