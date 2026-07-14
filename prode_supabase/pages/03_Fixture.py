@@ -537,7 +537,7 @@ with tab_resultados:
                         else:
                             st.markdown(f"**{local}** vs **{visitante}** — *Sin resultado*")
 
-                        c1, c2, c3, c4 = st.columns([1, 1, 2, 1])
+                        c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
                         with c1:
                             gl_new = st.number_input(
                                 "Goles local", min_value=0, max_value=20,
@@ -551,12 +551,6 @@ with tab_resultados:
                                 key=f"admin_gv_{p['id']}",
                             )
                         with c3:
-                            estado_new = st.selectbox(
-                                "Estado", ["a_confirmar", "confirmado"],
-                                index=0 if p.get("estado") != "confirmado" else 1,
-                                key=f"admin_estado_{p['id']}",
-                            )
-                        with c4:
                             st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                             if st.button("💾 Guardar", key=f"admin_save_{p['id']}", use_container_width=True):
                                 try:
@@ -565,7 +559,6 @@ with tab_resultados:
                                         .update({
                                             "goles_local":     int(gl_new),
                                             "goles_visitante": int(gv_new),
-                                            "estado":          estado_new,
                                         })
                                         .eq("id", p["id"])
                                         .execute()
@@ -579,7 +572,7 @@ with tab_resultados:
                                     # de supabase-py con el header Prefer/representation).
                                     verificacion = (
                                         sb.table("partidos")
-                                        .select("id, goles_local, goles_visitante, estado")
+                                        .select("id, goles_local, goles_visitante")
                                         .eq("id", p["id"])
                                         .execute()
                                         .data
@@ -633,6 +626,49 @@ with tab_resultados:
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error al guardar: {e}")
+                                    st.exception(e)
+                        with c4:
+                            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                            deshabilitado_reset = gl_act is None and gv_act is None
+                            if st.button(
+                                "🔄 Resetear partido",
+                                key=f"admin_reset_{p['id']}",
+                                use_container_width=True,
+                                disabled=deshabilitado_reset,
+                                help="Vuelve el partido a 'no disputado': borra el resultado y los puntos ya asignados.",
+                            ):
+                                try:
+                                    sb.table("partidos").update({
+                                        "goles_local":     None,
+                                        "goles_visitante": None,
+                                    }).eq("id", p["id"]).execute()
+
+                                    # Verificación real con SELECT fresco
+                                    verif_reset = (
+                                        sb.table("partidos")
+                                        .select("id, goles_local, goles_visitante")
+                                        .eq("id", p["id"])
+                                        .execute()
+                                        .data
+                                    )
+                                    fila_reset = verif_reset[0] if verif_reset else None
+                                    if not fila_reset or fila_reset.get("goles_local") is not None or fila_reset.get("goles_visitante") is not None:
+                                        st.error(
+                                            "⚠️ Se intentó resetear el partido pero el valor en la base "
+                                            f"sigue siendo el viejo: `{fila_reset}`. Revisar RLS/triggers."
+                                        )
+                                        st.stop()
+
+                                    # Borrar puntos ya asignados de los pronósticos de este partido
+                                    # (vuelven a quedar "pendientes", como si el partido no se hubiera jugado)
+                                    sb.table("pronosticos").update({"puntos": None}).eq("partido_id", p["id"]).execute()
+
+                                    cargar_partidos.clear()
+                                    st.cache_data.clear()
+                                    st.toast(f"Partido {local} vs {visitante} reseteado a no disputado.", icon="🔄")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al resetear: {e}")
                                     st.exception(e)
                         st.markdown("<hr style='opacity:0.08;'>", unsafe_allow_html=True)
 
