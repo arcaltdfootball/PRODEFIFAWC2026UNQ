@@ -297,17 +297,30 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                 payload["puntos"] = pts
 
             if existente:
-                sb.table("pronosticos").update(payload).eq("id", existente["id"]).execute()
+                resp = sb.table("pronosticos").update(payload).eq("id", existente["id"]).execute()
+                if not (resp.data or []):
+                    st.error(
+                        "⚠️ No se guardó (0 filas afectadas). Probablemente RLS está "
+                        "bloqueando el UPDATE en 'pronosticos' para la key usada."
+                    )
+                    return False
             else:
-                sb.table("pronosticos").insert({
+                resp = sb.table("pronosticos").insert({
                     "jugador_id": jugador_objetivo_id,
                     "partido_id": partido_id,
                     **payload,
                 }).execute()
+                if not (resp.data or []):
+                    st.error(
+                        "⚠️ No se guardó (0 filas insertadas). Probablemente RLS está "
+                        "bloqueando el INSERT en 'pronosticos' para la key usada."
+                    )
+                    return False
             st.toast(f"Pronóstico guardado: {_signo_a_texto(signo)}", icon="✅")
             return True
         except Exception as e:
             st.error(f"No se pudo guardar: {e}")
+            st.exception(e)
             return False
 
     tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden])
@@ -516,11 +529,28 @@ with tab_resultados:
                             st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                             if st.button("💾 Guardar", key=f"admin_save_{p['id']}", use_container_width=True):
                                 try:
-                                    sb.table("partidos").update({
-                                        "goles_local":     int(gl_new),
-                                        "goles_visitante": int(gv_new),
-                                        "estado":          estado_new,
-                                    }).eq("id", p["id"]).execute()
+                                    resp_update = (
+                                        sb.table("partidos")
+                                        .update({
+                                            "goles_local":     int(gl_new),
+                                            "goles_visitante": int(gv_new),
+                                            "estado":          estado_new,
+                                        })
+                                        .eq("id", p["id"])
+                                        .execute()
+                                    )
+
+                                    filas_afectadas = resp_update.data or []
+                                    if not filas_afectadas:
+                                        st.error(
+                                            "⚠️ El UPDATE se ejecutó pero no modificó ninguna fila. "
+                                            "Esto normalmente pasa cuando Supabase tiene RLS (Row Level "
+                                            "Security) activado en la tabla 'partidos' y la SUPABASE_KEY "
+                                            "usada (anon/public) no tiene permiso de UPDATE. "
+                                            "Solución: usar la SUPABASE_KEY de tipo 'service_role' en los "
+                                            "secrets, o agregar una policy de UPDATE para el rol anon."
+                                        )
+                                        st.stop()
 
                                     # Recalcular puntos de pronósticos de este partido
                                     if gl_new > gv_new:   signo_r = "1"
@@ -544,6 +574,7 @@ with tab_resultados:
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error al guardar: {e}")
+                                    st.exception(e)
                         st.markdown("<hr style='opacity:0.08;'>", unsafe_allow_html=True)
 
 
