@@ -690,11 +690,25 @@ with tab_jugadores:
                     # Borrar pronósticos primero (FK), luego jugadores
                     sb.table("pronosticos").delete().neq("id", 0).execute()
                     sb.table("jugadores").delete().neq("id", 0).execute()
-                    st.session_state.confirmar_reset_all = False
-                    st.toast("✅ Lista de participantes reseteada.", icon="🗑️")
-                    st.rerun()
+
+                    # Verificación real con SELECT fresco (no confiar solo en
+                    # que no haya habido excepción, por el mismo motivo que
+                    # con los resultados: Supabase puede no tirar error aunque
+                    # no borre nada, p.ej. por RLS o por FKs).
+                    quedan = sb.table("jugadores").select("id").execute().data or []
+                    if quedan:
+                        st.error(
+                            f"⚠️ Se ejecutó el borrado pero todavía quedan {len(quedan)} "
+                            "jugadores en la base. Revisar RLS (policy de DELETE) o "
+                            "restricciones de foreign key."
+                        )
+                    else:
+                        st.session_state.confirmar_reset_all = False
+                        st.toast("✅ Lista de participantes reseteada.", icon="🗑️")
+                        st.rerun()
                 except Exception as e:
                     st.error(f"Error al resetear: {e}")
+                    st.exception(e)
         with col_no:
             if st.button("❌ Cancelar"):
                 st.session_state.confirmar_reset_all = False
@@ -737,11 +751,27 @@ with tab_jugadores:
                                 # Borrar pronósticos del jugador primero
                                 sb.table("pronosticos").delete().eq("jugador_id", j["id"]).execute()
                                 sb.table("jugadores").delete().eq("id", j["id"]).execute()
-                                st.session_state.confirmar_eliminar_id = None
-                                st.toast(f"Jugador {j['nombre']} eliminado.", icon="🗑️")
-                                st.rerun()
+
+                                # Verificación real con SELECT fresco
+                                sigue = (
+                                    sb.table("jugadores")
+                                    .select("id")
+                                    .eq("id", j["id"])
+                                    .execute()
+                                    .data
+                                )
+                                if sigue:
+                                    st.error(
+                                        f"⚠️ Se ejecutó el borrado pero {j['nombre']} sigue "
+                                        "en la base. Revisar RLS (policy de DELETE) o FKs."
+                                    )
+                                else:
+                                    st.session_state.confirmar_eliminar_id = None
+                                    st.toast(f"Jugador {j['nombre']} eliminado.", icon="🗑️")
+                                    st.rerun()
                             except Exception as e:
                                 st.error(f"Error al eliminar: {e}")
+                                st.exception(e)
                     with col_no2:
                         if st.button("❌ No", key=f"del_no_{j['id']}", use_container_width=True):
                             st.session_state.confirmar_eliminar_id = None
