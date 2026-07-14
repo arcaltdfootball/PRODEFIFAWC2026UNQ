@@ -36,7 +36,6 @@ st.markdown(
 
     h1, h2, h3 { font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; }
 
-    /* ── Header ── */
     .main-label {
         font-size: 0.72rem; color: #94a3b8; text-align: center;
         text-transform: uppercase; letter-spacing: 4px; margin-bottom: 4px;
@@ -52,7 +51,6 @@ st.markdown(
         margin-bottom: 1.6rem; letter-spacing: 2px; text-transform: uppercase;
     }
 
-    /* ── Fecha slider custom ── */
     .fecha-slider-wrap {
         max-width: 580px; margin: 0 auto 6px;
         background: rgba(15,23,42,0.55);
@@ -80,10 +78,9 @@ st.markdown(
     }
     .fdot:hover { background: rgba(232,201,107,0.45); transform: scale(1.15); }
     .fdot.active { background: #e8c96b !important; box-shadow: 0 0 12px rgba(232,201,107,0.55); }
-    .fdot.near { background: rgba(232,201,107,0.5); }
+    .fdot.near   { background: rgba(232,201,107,0.5); }
     .fdot.medium { background: rgba(232,201,107,0.28); }
 
-    /* ── Match card ── */
     .outer-card {
         background: rgba(16,26,46,0.65);
         backdrop-filter: blur(22px);
@@ -140,9 +137,8 @@ st.markdown(
         max-width: 110px;
     }
 
-    /* ── Score center ── */
     .score-block { display: flex; flex-direction: column; align-items: center; min-width: 70px; gap: 4px; }
-    .score-vs { font-family: 'Bebas Neue', sans-serif; font-size: 1.6rem; color: #475569; letter-spacing: 2px; }
+    .score-vs    { font-family: 'Bebas Neue', sans-serif; font-size: 1.6rem; color: #475569; letter-spacing: 2px; }
     .score-live-row { display: flex; align-items: center; justify-content: center; gap: 2px; }
     .score-number { font-family: 'Bebas Neue', sans-serif; font-size: 2rem; color: #94a3b8; line-height: 1; }
     .score-number.big {
@@ -152,13 +148,13 @@ st.markdown(
     }
     .score-sep { font-family: 'Bebas Neue', sans-serif; font-size: 3rem; color: #334155; margin: 0 6px; line-height: 1; }
 
-    /* ── Result bar ── */
+    /* ── Result bar con signo 1/X/2 ── */
     .result-bar {
         background: linear-gradient(135deg, #16a34a, #22c55e);
         color: white; padding: 14px 20px;
         border-radius: 16px; text-align: center;
         font-weight: 700; font-size: 1.05rem;
-        max-width: 580px; margin: 0 auto 16px;
+        max-width: 580px; margin: 0 auto 8px;
         letter-spacing: 0.5px;
         box-shadow: 0 4px 16px rgba(34,197,94,0.3);
     }
@@ -173,7 +169,39 @@ st.markdown(
         box-shadow: none;
     }
 
-    /* ── Navegación de partidos ── */
+    /* ── Signo 1/X/2 badge ── */
+    .signo-bar {
+        max-width: 580px; margin: 0 auto 16px;
+        display: flex; justify-content: center; gap: 10px;
+        align-items: center;
+    }
+    .signo-chip {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.1rem; letter-spacing: 3px;
+        padding: 6px 18px; border-radius: 10px;
+        opacity: 0.35;
+    }
+    .signo-chip.activo {
+        opacity: 1;
+        box-shadow: 0 0 16px rgba(232,201,107,0.4);
+        transform: scale(1.12);
+    }
+    .signo-1 { background: rgba(59,130,246,0.25); color: #60a5fa; border: 1px solid #3b82f6; }
+    .signo-x { background: rgba(148,163,184,0.18); color: #94a3b8; border: 1px solid #475569; }
+    .signo-2 { background: rgba(239,68,68,0.22);  color: #f87171; border: 1px solid #ef4444; }
+
+    /* Pronóstico strip */
+    .pron-strip {
+        max-width: 580px; margin: 0 auto 16px;
+        background: rgba(15,23,42,0.5);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 14px;
+        padding: 12px 18px;
+        font-size: 0.82rem; color: #94a3b8;
+        text-align: center;
+    }
+    .pron-strip b { color: #e8c96b; }
+
     .nav-wrapper {
         background: rgba(12,20,38,0.65);
         backdrop-filter: blur(14px);
@@ -204,27 +232,19 @@ st.markdown(
         box-shadow: 0 0 14px rgba(232,201,107,0.6);
         transform: scale(1.35);
     }
-
     .nav-counter {
         font-size: 0.72rem; color: #475569;
         text-align: center; margin-top: 10px; letter-spacing: 1px;
     }
-
-    /* ── Zona label ── */
     .zona-activa-label {
         font-family: 'Bebas Neue', sans-serif;
-        font-size: 1.05rem;
-        color: #e8c96b;
-        text-align: center;
-        letter-spacing: 4px;
-        margin-bottom: 12px;
-        text-transform: uppercase;
+        font-size: 1.05rem; color: #e8c96b;
+        text-align: center; letter-spacing: 4px;
+        margin-bottom: 12px; text-transform: uppercase;
     }
 
     [data-testid="stHeader"] { background: transparent; }
     .block-container { padding-top: 2rem; }
-
-    /* Hide default streamlit select_slider track labels */
     div[data-testid="stSlider"] > div > div > div:last-child { display: none !important; }
     </style>
     """,
@@ -254,9 +274,6 @@ try:
 except Exception as e:
     st.error(
         "No se pudo leer la tabla 'partidos' desde Supabase.\n\n"
-        "Causas más comunes:\n"
-        "- La tabla no existe todavía o está vacía.\n"
-        "- Row Level Security (RLS) activado sin policy de SELECT para 'anon'.\n\n"
         f"Detalle técnico: {e}"
     )
     st.stop()
@@ -265,7 +282,19 @@ if not partidos_db:
     st.info("No hay partidos registrados todavía.")
     st.stop()
 
-# ── Agrupar por zona → fecha ──────────────────────────────────────────────────
+# ── Sesión: jugador logueado (para mostrar su pronóstico) ─────────────────
+jugador_logueado_id = st.session_state.get("jugador_id")
+
+# ── Función: calcular signo de un partido ────────────────────────────────
+def signo_de(gl, gv):
+    if gl is None or gv is None:
+        return None
+    if gl > gv:   return "1"
+    if gl == gv:  return "X"
+    return "2"
+
+
+# ── Agrupar por zona → fecha ─────────────────────────────────────────────
 partidos_por_zona = {}
 for p in partidos_db:
     z = p["zona"]
@@ -282,7 +311,7 @@ zonas_disponibles = sorted(
 if "zona_activa" not in st.session_state:
     st.session_state["zona_activa"] = zonas_disponibles[0]
 
-# ── Selector de zona ──────────────────────────────────────────────────────────
+# ── Selector de zona ─────────────────────────────────────────────────────
 cols_zona = st.columns(len(zonas_disponibles))
 for i, z in enumerate(zonas_disponibles):
     with cols_zona[i]:
@@ -297,7 +326,7 @@ zona_sel = st.session_state["zona_activa"]
 etiqueta_zona = "INTERZONAL" if zona_sel == "Interzonal" else f"ZONA {zona_sel}"
 st.markdown(f'<p class="zona-activa-label">{etiqueta_zona}</p>', unsafe_allow_html=True)
 
-# ── Selector de fecha con puntos dinámicos ────────────────────────────────────
+# ── Selector de fecha ────────────────────────────────────────────────────
 fechas_disponibles = sorted(partidos_por_zona[zona_sel].keys(), key=int)
 total_fechas = len(fechas_disponibles)
 
@@ -310,32 +339,30 @@ if st.session_state[key_fecha] not in fechas_disponibles:
 fecha_sel = st.session_state[key_fecha]
 fecha_idx = fechas_disponibles.index(fecha_sel)
 
-# Construir HTML de puntos de fecha
-# Tamaño escala: activo=22px, near1=17px, near2=13px, medium=10px, far=8px
+
 def dot_size(dist):
-    if dist == 0:   return 22
-    if dist == 1:   return 17
-    if dist == 2:   return 13
-    if dist == 3:   return 10
+    if dist == 0: return 22
+    if dist == 1: return 17
+    if dist == 2: return 13
+    if dist == 3: return 10
     return 8
 
 def dot_class(dist):
-    if dist == 0:   return "fdot active"
-    if dist == 1:   return "fdot near"
-    if dist == 2:   return "fdot medium"
+    if dist == 0: return "fdot active"
+    if dist == 1: return "fdot near"
+    if dist == 2: return "fdot medium"
     return "fdot"
+
 
 fecha_dots_html = '<div class="fecha-dots-row">'
 for i, f in enumerate(fechas_disponibles):
     dist = abs(i - fecha_idx)
-    sz = dot_size(dist)
-    cls = dot_class(dist)
+    sz   = dot_size(dist)
+    cls  = dot_class(dist)
     fecha_dots_html += (
         f'<button class="{cls}" '
         f'style="width:{sz}px;height:{sz}px;" '
-        f'title="Fecha {f}" '
-        f'onclick="window.parent.postMessage({{type:\'streamlit:setComponentValue\', value:\'fecha_{f}\'}}, \'*\')">'
-        f'</button>'
+        f'title="Fecha {f}"></button>'
     )
 fecha_dots_html += '</div>'
 
@@ -347,10 +374,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Botones reales invisibles para cambio de fecha (Streamlit no acepta JS postMessage directamente)
-# Usamos columnas de botones ocultos mapeados a cada fecha
 if total_fechas > 1:
-    # Fila de botones reales para cambio de fecha (se ocultan con CSS si se desea)
     with st.expander("📅 Ir a fecha...", expanded=False):
         cols_f = st.columns(min(total_fechas, 8))
         for i, f in enumerate(fechas_disponibles):
@@ -364,7 +388,7 @@ if total_fechas > 1:
 
 st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
 
-# ── Lista de partidos ─────────────────────────────────────────────────────────
+# ── Lista de partidos ────────────────────────────────────────────────────
 lista_partidos = sorted(
     partidos_por_zona[zona_sel][fecha_sel],
     key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99")
@@ -379,16 +403,15 @@ if idx >= total:
     idx = 0
     st.session_state[key_idx] = 0
 
-partido = lista_partidos[idx]
-
-local      = partido["equipo_local"]
-visitante  = partido["equipo_visitante"]
-fecha_part = partido.get("fecha_partido")
-hora       = partido.get("hora")
-estadio    = partido.get("estadio")
-estado     = partido.get("estado") or "a_confirmar"
-gl         = partido.get("goles_local")
-gv         = partido.get("goles_visitante")
+partido   = lista_partidos[idx]
+local     = partido["equipo_local"]
+visitante = partido["equipo_visitante"]
+fecha_part= partido.get("fecha_partido")
+hora      = partido.get("hora")
+estadio   = partido.get("estadio")
+estado    = partido.get("estado") or "a_confirmar"
+gl        = partido.get("goles_local")
+gv        = partido.get("goles_visitante")
 
 escudo_local_url     = get_escudo(local)
 escudo_visitante_url = get_escudo(visitante)
@@ -403,7 +426,9 @@ escudo_visitante_html = (
 )
 
 partido_jugado = gl is not None and gv is not None
+signo_real     = signo_de(gl, gv)
 
+# ── Score center ─────────────────────────────────────────────────────────
 if partido_jugado:
     score_center_html = (
         '<div class="score-live-row">'
@@ -425,7 +450,7 @@ else:
     else:
         result_bar_html = '<div class="result-bar pending">Fecha y Hora a Confirmar</div>'
 
-# ── Meta chips ────────────────────────────────────────────────────────────────
+# ── Meta chips ────────────────────────────────────────────────────────────
 meta_chips = []
 if fecha_part:
     meta_chips.append(f'<span class="match-meta-chip"><i class="ti ti-calendar-event"></i>{fecha_part}</span>')
@@ -437,7 +462,7 @@ if not meta_chips:
     meta_chips.append('<span class="match-meta-chip"><i class="ti ti-calendar-event"></i>A confirmar</span>')
 meta_str = " ".join(meta_chips)
 
-# ── Card ─────────────────────────────────────────────────────────────────────
+# ── Render card ───────────────────────────────────────────────────────────
 outer_card = (
     '<div class="outer-card">'
     f'<div class="match-meta">{meta_str}</div>'
@@ -453,7 +478,73 @@ outer_card = (
 st.markdown(outer_card, unsafe_allow_html=True)
 st.markdown(result_bar_html, unsafe_allow_html=True)
 
-# ── NAVEGACIÓN DE PARTIDOS con puntos clickeables ─────────────────────────────
+# ── SIGNO 1 / X / 2 visual ───────────────────────────────────────────────
+activo_1 = "activo" if signo_real == "1" else ""
+activo_x = "activo" if signo_real == "X" else ""
+activo_2 = "activo" if signo_real == "2" else ""
+
+st.markdown(
+    f'<div class="signo-bar">'
+    f'<span class="signo-chip signo-1 {activo_1}">1 · LOCAL</span>'
+    f'<span class="signo-chip signo-x {activo_x}">X · EMPATE</span>'
+    f'<span class="signo-chip signo-2 {activo_2}">2 · VISITANTE</span>'
+    f'</div>',
+    unsafe_allow_html=True
+)
+
+# ── Pronóstico del jugador logueado para este partido ────────────────────
+if jugador_logueado_id:
+    try:
+        pron_resp = (
+            sb.table("pronosticos")
+            .select("signo_pred, puntos")
+            .eq("jugador_id", jugador_logueado_id)
+            .eq("partido_id", partido["id"])
+            .execute()
+        )
+        pron_data = pron_resp.data[0] if pron_resp.data else None
+    except Exception:
+        pron_data = None
+
+    if pron_data and pron_data.get("signo_pred"):
+        signo_p = pron_data["signo_pred"]
+        pts_p   = pron_data.get("puntos")
+        labels  = {"1": "1 · LOCAL", "X": "X · EMPATE", "2": "2 · VISITANTE"}
+        label_p = labels.get(signo_p, signo_p)
+
+        if partido_jugado:
+            if signo_p == signo_real:
+                texto_pts = f"✅ +{pts_p} pts" if pts_p is not None else "✅ Acertaste"
+                strip_html = (
+                    f'<div class="pron-strip">'
+                    f'Tu pronóstico: <b>{label_p}</b> · {texto_pts}'
+                    f'</div>'
+                )
+            else:
+                strip_html = (
+                    f'<div class="pron-strip">'
+                    f'Tu pronóstico: <b>{label_p}</b> · ❌ No acertaste'
+                    f'</div>'
+                )
+        else:
+            strip_html = (
+                f'<div class="pron-strip">'
+                f'Tu pronóstico: <b>{label_p}</b> · ⏳ Partido pendiente'
+                f'</div>'
+            )
+    else:
+        if partido_jugado:
+            strip_html = '<div class="pron-strip">Sin pronóstico para este partido.</div>'
+        else:
+            strip_html = (
+                '<div class="pron-strip">'
+                'No cargaste pronóstico · '
+                '<a href="/03_Fixture" target="_self" style="color:#e8c96b;">Ir al Fixture →</a>'
+                '</div>'
+            )
+    st.markdown(strip_html, unsafe_allow_html=True)
+
+# ── Navegación de partidos ────────────────────────────────────────────────
 st.markdown(
     '<div class="nav-wrapper">'
     '<div class="nav-label">Partidos de la Fecha</div>'
@@ -461,15 +552,11 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Generamos un botón real de Streamlit por cada partido (como punto)
-# Los renderizamos en columnas muy estrechas dentro del nav-wrapper
 dot_cols = st.columns(total)
 for i in range(total):
     with dot_cols[i]:
-        is_active = (i == idx)
-        # Mini botón con apariencia de punto vía CSS inline
-        dot_label = "●" if is_active else "○"
-        # Usamos un botón real de Streamlit pero sobreescribimos su estilo
+        is_active  = (i == idx)
+        dot_label  = "●" if is_active else "○"
         if st.button(
             dot_label,
             key=f"mdot_{zona_sel}_{fecha_sel}_{i}",
@@ -480,7 +567,6 @@ for i in range(total):
 
 st.markdown("</div></div>", unsafe_allow_html=True)
 
-# Aplicar estilos a los botones de puntos (hacerlos circulares)
 st.markdown(
     f"""
     <style>
@@ -494,7 +580,6 @@ st.markdown(
         f'transform:{"scale(1.4)" if i==idx else "scale(1)"} !important; }}'
         for i in range(total)
     ])}
-    /* Ocultar el texto interno de los botones de puntos */
     .stColumns > div button p {{ visibility: hidden; }}
     </style>
     """,
@@ -506,7 +591,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ── Flechas prev / next ───────────────────────────────────────────────────────
 _, col_prev, _, col_next, _ = st.columns([1, 1, 4, 1, 1])
 with col_prev:
     if st.button("◀", key="prev_btn", disabled=(idx == 0)):
