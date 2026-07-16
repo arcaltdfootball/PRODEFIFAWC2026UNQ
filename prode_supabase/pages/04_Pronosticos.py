@@ -207,11 +207,19 @@ st.markdown(
         text-align: center; letter-spacing: 3px;
         margin-bottom: 10px; text-transform: uppercase;
     }
-    .fecha-label {
+    .fecha-slider-label {
         font-family: 'Bebas Neue', sans-serif;
-        font-size: 0.85rem; color: #94a3b8;
-        text-align: center; letter-spacing: 2px;
-        margin: 4px 0 12px; text-transform: uppercase;
+        font-size: 1.05rem; color: #e2e8f0; letter-spacing: 3px;
+        text-align: center; margin-bottom: 4px;
+    }
+    .fecha-slider-sub {
+        font-family: 'DM Sans', sans-serif;
+        font-size: 0.62rem; color: #94a3b8; letter-spacing: 1px;
+        text-transform: none;
+    }
+    .fecha-dots-row {
+        display: flex; align-items: center; justify-content: center;
+        gap: 5px; flex-wrap: wrap;
     }
 
     [data-testid="stHeader"] { background: transparent; }
@@ -347,6 +355,22 @@ def etiqueta_zona(z):
 
 
 VIOLET = "#a78bfa"
+
+
+def fecha_dot_size(dist):
+    """El punto se agranda cuanto más cerca está de la fecha en la que estás parado."""
+    if dist == 0: return 24
+    if dist == 1: return 18
+    if dist == 2: return 13
+    if dist == 3: return 10
+    return 8
+
+
+def fecha_dot_color(dist):
+    if dist == 0: return VIOLET
+    if dist == 1: return "rgba(167,139,250,0.55)"
+    if dist == 2: return "rgba(167,139,250,0.30)"
+    return "rgba(255,255,255,0.15)"
 
 
 # ── Escudos ───────────────────────────────────────────────────────────────────────────
@@ -547,43 +571,71 @@ for tab, zona in zip(tabs_zona, zonas_lista):
             unsafe_allow_html=True,
         )
 
-        # ── Selector de fecha (pills compactas, no estiradas) ────────────────
-        cols_fecha = st.columns(len(fechas_zona))
-        _fecha_btn_keys = []
-        for i, f in enumerate(fechas_zona):
-            with cols_fecha[i]:
-                es_activa = (f == st.session_state[key_fecha])
-                btn_key_f = f"pron_fbtn_{zona}_{f}"
-                _fecha_btn_keys.append(btn_key_f)
-                if st.button(f"Fecha {f}", key=btn_key_f,
-                             type="primary" if es_activa else "secondary"):
-                    st.session_state[key_fecha] = f
-                    st.session_state[f"pron_idx_{zona}_{f}"] = 0
-                    st.rerun()
+        fecha_idx = fechas_zona.index(st.session_state[key_fecha])
 
-        # CSS: las columnas dejan de repartirse el ancho completo y el botón
-        # queda como una pill chica, en vez de un rectángulo largo y estirado.
+        # ── Selector de fecha: puntos violetas animados, idéntico a
+        # 01_Resultados.py (mismo mecanismo de key= -> clase st-key-<key>) ──
+        with st.container(key=f"fecha_wrap_{zona}"):
+            st.markdown(
+                f'<div class="fecha-slider-label">FECHA {st.session_state[key_fecha]}'
+                f'<div class="fecha-slider-sub">estás parado acá</div></div>',
+                unsafe_allow_html=True
+            )
+
+            fecha_cols = st.columns(len(fechas_zona))
+            for i, f in enumerate(fechas_zona):
+                with fecha_cols[i]:
+                    if st.button("●", key=f"pron_fdot_{zona}_{f}", help=f"Ir a la fecha {f}"):
+                        st.session_state[key_fecha] = f
+                        st.session_state[f"pron_idx_{zona}_{f}"] = 0
+                        st.rerun()
+
+        # CSS: cada punto se targetea por su propia clase st-key-<key>
+        _fecha_rules = []
+        for i, f in enumerate(fechas_zona):
+            dist = abs(i - fecha_idx)
+            size = fecha_dot_size(dist)
+            color = fecha_dot_color(dist)
+            is_active = (dist == 0)
+            glow = "box-shadow: 0 0 16px rgba(167,139,250,0.85) !important;" if is_active else "box-shadow: none !important;"
+            border = "border: 2px solid rgba(255,255,255,0.9) !important;" if is_active else "border: none !important;"
+            btn_key = f"pron_fdot_{zona}_{f}"
+            _fecha_rules.append(
+                f'.st-key-{btn_key} button {{ '
+                f'width:{size}px !important; height:{size}px !important; '
+                f'min-height:0 !important; min-width:0 !important; '
+                f'border-radius:50% !important; padding:0 !important; '
+                f'background:{color} !important; color:transparent !important; '
+                f'{border} {glow} transition: all 0.2s ease; margin:0 auto !important; }}'
+            )
+
         st.markdown(
             f"""
             <style>
-            div[data-testid="stHorizontalBlock"]:has([class*="st-key-pron_fbtn_{zona}_"]) {{
-                gap: 8px !important; flex-wrap: wrap !important; justify-content: center !important;
+            .st-key-fecha_wrap_{zona} {{
+                max-width: 580px; margin: 0 auto 6px;
+                background: rgba(15,23,42,0.55);
+                backdrop-filter: blur(14px);
+                border: 1px solid rgba(255,255,255,0.07);
+                border-radius: 18px;
+                padding: 18px 24px 16px;
             }}
-            div[data-testid="stHorizontalBlock"]:has([class*="st-key-pron_fbtn_{zona}_"])
-                > div[data-testid="column"] {{
-                width: auto !important; flex: 0 0 auto !important; min-width: 0 !important;
+            div[data-testid="stHorizontalBlock"]:has([class*="st-key-pron_fdot_{zona}_"]) {{
+                gap: 6px !important; align-items: center !important;
+                flex-wrap: wrap !important; justify-content: center !important;
             }}
-            {"".join(
-                f'.st-key-{k} button {{ '
-                f'padding: 4px 16px !important; height: 32px !important; min-height: 0 !important; '
-                f'border-radius: 10px !important; font-size: 0.78rem !important; '
-                f'letter-spacing: 0.5px !important; }}'
-                for k in _fecha_btn_keys
-            )}
+            {"".join(_fecha_rules)}
+            [class*="st-key-pron_fdot_{zona}_"] button:hover {{
+                transform: scale(1.3) !important;
+                background: {VIOLET} !important;
+            }}
+            [class*="st-key-pron_fdot_{zona}_"] button p {{ visibility: hidden; }}
             </style>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
+
+        st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
 
         fecha_sel = st.session_state[key_fecha]
 
