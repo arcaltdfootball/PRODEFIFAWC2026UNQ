@@ -436,12 +436,24 @@ for i in range(total):
 
 # el botón se estira con position:absolute/inset:0 para cubrir TODO el
 # recuadro del wrapper (mismo contenedor que el escudo), targeteado por su
-# propia clase st-key-cardwrap_<key> ──
+# propia clase st-key-cardwrap_<key>.
+#
+# OJO: Streamlit le pone "position: relative" a varios de sus propios divs
+# internos (el wrapper del botón, el element-container, etc). Si no lo
+# neutralizamos, el botón queda posicionado respecto a ESE div chiquito de
+# Streamlit y no respecto al recuadro completo -> el área de click termina
+# siendo minúscula aunque el CSS "parezca" correcto. Por eso primero
+# reseteamos todo a "static" adentro del wrapper, y recién ahí volvemos a
+# poner "relative"/"absolute" solo donde nosotros queremos.
 _card_rules = []
 for btn_key in _card_keys:
     _card_rules.append(
+        f'.st-key-cardwrap_{btn_key} * {{ position: static !important; }}'
+    )
+    _card_rules.append(
         f'.st-key-cardwrap_{btn_key} {{ '
-        f'position: relative !important; width: 78px !important; margin: 0 auto !important; }}'
+        f'position: relative !important; width: 78px !important; margin: 0 auto !important; '
+        f'cursor: pointer !important; }}'
     )
     _card_rules.append(
         f'.st-key-cardwrap_{btn_key} [data-testid="stButton"] {{ '
@@ -450,6 +462,7 @@ for btn_key in _card_keys:
     )
     _card_rules.append(
         f'.st-key-cardwrap_{btn_key} button {{ '
+        f'position: absolute !important; inset: 0 !important; '
         f'width: 100% !important; height: 100% !important; min-height: 0 !important; '
         f'padding: 0 !important; background: transparent !important; '
         f'border: none !important; opacity: 0 !important; cursor: pointer !important; }}'
