@@ -1,10 +1,20 @@
 """
-03_Fixture.py — Prode FIFA WC 2026
+03_Fixture.py — Prode Liga Profesional Argentina
 Cambios:
-  - Boleta usa 1 / X / 2 (local / empate / visitante) en vez de goles
+  - Boleta usa marcador exacto (goles local / goles visitante); el signo
+    (1/X/2) se deriva automáticamente a partir del marcador cargado.
+  - Sistema de puntaje: 1 punto por acertar el signo (Local/Empate/Visitante),
+    3 puntos en total si se acierta el marcador exacto.
   - Admin puede eliminar participantes con confirmación
   - Admin puede resetear (borrar) la lista completa de participantes
-  - Resultado se guarda como 1/X/2 y se refleja en 01_Resultados.py
+  - Resultado se guarda como goles y se refleja en 01_Resultados.py
+
+IMPORTANTE: la tabla `pronosticos` en Supabase necesita las columnas
+`goles_local_pred` (int, nullable) y `goles_visitante_pred` (int, nullable)
+además de las existentes `signo_pred` y `puntos`. Si no existen, correr:
+
+    ALTER TABLE pronosticos ADD COLUMN goles_local_pred integer;
+    ALTER TABLE pronosticos ADD COLUMN goles_visitante_pred integer;
 """
 import base64
 import hashlib
@@ -266,7 +276,7 @@ def cargar_partidos():
 def cargar_pronosticos_de(j_id):
     res = (
         sb.table("pronosticos")
-        .select("id, partido_id, signo_pred, puntos")
+        .select("id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos")
         .eq("jugador_id", j_id)
         .execute()
     )
@@ -305,25 +315,47 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
     por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
     pron = cargar_pronosticos_de(jugador_objetivo_id)
 
-    def guardar_signo(partido_id, signo):
-        """Guarda pronóstico 1/X/2. Calcula puntos si ya hay resultado oficial."""
+    def _calcular_signo(gl, gv):
+        if gl is None or gv is None:
+            return None
+        if gl > gv:
+            return "1"
+        if gl == gv:
+            return "X"
+        return "2"
+
+    def guardar_pronostico(partido_id, gl_pred, gv_pred):
+        """
+        Guarda el pronóstico de marcador exacto (goles local/visitante).
+        El signo (1/X/2) se deriva automáticamente del marcador.
+        Sistema de puntaje:
+          - 1 punto si acierta el signo (Local / Empate / Visitante)
+          - 3 puntos en total si acierta el resultado exacto
+        """
         try:
+            signo = _calcular_signo(gl_pred, gv_pred)
+
             # Obtener resultado real del partido para calcular puntos al instante
             partido_data = next((p for p in partidos_db if p["id"] == partido_id), {})
-            gl = partido_data.get("goles_local")
-            gv = partido_data.get("goles_visitante")
-            signo_real = None
-            if gl is not None and gv is not None:
-                if gl > gv:
-                    signo_real = "1"
-                elif gl == gv:
-                    signo_real = "X"
-                else:
-                    signo_real = "2"
-            pts = 3 if (signo_real and signo == signo_real) else (0 if signo_real else None)
+            gl_real = partido_data.get("goles_local")
+            gv_real = partido_data.get("goles_visitante")
+            signo_real = _calcular_signo(gl_real, gv_real)
+
+            if signo_real is None:
+                pts = None  # partido todavía no jugado
+            elif gl_pred == gl_real and gv_pred == gv_real:
+                pts = 3
+            elif signo == signo_real:
+                pts = 1
+            else:
+                pts = 0
 
             existente = pron.get(partido_id)
-            payload = {"signo_pred": signo}
+            payload = {
+                "signo_pred": signo,
+                "goles_local_pred": gl_pred,
+                "goles_visitante_pred": gv_pred,
+            }
             if pts is not None:
                 payload["puntos"] = pts
 
@@ -347,7 +379,10 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         "bloqueando el INSERT en 'pronosticos' para la key usada."
                     )
                     return False
-            st.toast(f"Pronóstico guardado: {_signo_a_texto(signo)}", icon="✅")
+            st.toast(
+                f"Pronóstico guardado: {gl_pred}-{gv_pred} ({_signo_a_texto(signo)})",
+                icon="✅",
+            )
             return True
         except Exception as e:
             st.error(f"No se pudo guardar: {e}")
@@ -419,54 +454,62 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                 unsafe_allow_html=True,
                             )
 
-                        # ── Selector 1 / X / 2 ──────────────────────────────
+                        # ── Predicción de marcador exacto ────────────────────
+                        gl_pred_prev = prev.get("goles_local_pred") if prev else None
+                        gv_pred_prev = prev.get("goles_visitante_pred") if prev else None
+
                         if editable and not ya_jugado:
-                            col_b1, col_bx, col_b2, col_estado = st.columns([1, 1, 1, 2])
-                            with col_b1:
-                                activo_1 = signo_prev == "1"
+                            col_gl, col_gv, col_btn, col_estado = st.columns([1, 1, 1.4, 2])
+                            with col_gl:
+                                gl_new_pred = st.number_input(
+                                    f"Goles {local}", min_value=0, max_value=15,
+                                    value=gl_pred_prev if gl_pred_prev is not None else 0,
+                                    key=f"gl_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                )
+                            with col_gv:
+                                gv_new_pred = st.number_input(
+                                    f"Goles {visitante}", min_value=0, max_value=15,
+                                    value=gv_pred_prev if gv_pred_prev is not None else 0,
+                                    key=f"gv_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                )
+                            with col_btn:
+                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                                 if st.button(
-                                    "1 · LOCAL" if not activo_1 else "✅ 1",
-                                    key=f"b1_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                    "💾 Guardar pronóstico",
+                                    key=f"guardar_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                     use_container_width=True,
-                                    type="primary" if activo_1 else "secondary",
                                 ):
-                                    if guardar_signo(p["id"], "1"):
-                                        st.rerun()
-                            with col_bx:
-                                activo_x = signo_prev == "X"
-                                if st.button(
-                                    "X · EMPATE" if not activo_x else "✅ X",
-                                    key=f"bx_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                    use_container_width=True,
-                                    type="primary" if activo_x else "secondary",
-                                ):
-                                    if guardar_signo(p["id"], "X"):
-                                        st.rerun()
-                            with col_b2:
-                                activo_2 = signo_prev == "2"
-                                if st.button(
-                                    "2 · VISIT." if not activo_2 else "✅ 2",
-                                    key=f"b2_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                    use_container_width=True,
-                                    type="primary" if activo_2 else "secondary",
-                                ):
-                                    if guardar_signo(p["id"], "2"):
+                                    if guardar_pronostico(p["id"], int(gl_new_pred), int(gv_new_pred)):
                                         st.rerun()
                             with col_estado:
+                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                                 st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
 
                         else:
                             # Solo lectura o partido ya jugado
                             col_pron, col_pts = st.columns([3, 2])
                             with col_pron:
-                                st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
+                                if gl_pred_prev is not None and gv_pred_prev is not None:
+                                    st.markdown(
+                                        f'<span class="badge-sin">Tu pronóstico: {gl_pred_prev} - {gv_pred_prev}</span> '
+                                        + _badge_signo(signo_prev),
+                                        unsafe_allow_html=True,
+                                    )
+                                else:
+                                    st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
                             with col_pts:
                                 if ya_jugado and signo_prev:
                                     pts = prev.get("puntos") if prev else None
-                                    if signo_prev == signo_real:
+                                    if pts == 3:
                                         st.markdown(
-                                            f'<span class="badge-ok">✅ Acertaste</span>'
-                                            + (f'<span class="badge-pts">+{pts} pts</span>' if pts is not None else ""),
+                                            '<span class="badge-ok">✅ Resultado exacto</span>'
+                                            '<span class="badge-pts">+3 pts</span>',
+                                            unsafe_allow_html=True,
+                                        )
+                                    elif pts and pts >= 1:
+                                        st.markdown(
+                                            '<span class="badge-ok">✅ Acertaste el signo</span>'
+                                            '<span class="badge-pts">+1 pt</span>',
                                             unsafe_allow_html=True,
                                         )
                                     else:
@@ -506,8 +549,9 @@ tab_resultados, tab_jugadores, tab_boletas = st.tabs(
 # ── Tab 1: resultados reales ──────────────────────────────────────────────
 with tab_resultados:
     st.caption(
-        "Cargá el resultado real de cada partido. El signo (1/X/2) se calcula "
-        "automáticamente y los pronósticos se comparan para asignar puntos."
+        "Cargá el resultado real de cada partido. Los pronósticos se comparan "
+        "automáticamente: 1 punto si acertaron el signo (1/X/2), 3 puntos en "
+        "total si acertaron el marcador exacto."
     )
     por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
     tabs_r = st.tabs([etiqueta_zona(z) for z in zonas_orden])
@@ -611,13 +655,20 @@ with tab_resultados:
 
                                     prons = (
                                         sb.table("pronosticos")
-                                        .select("id, signo_pred")
+                                        .select("id, signo_pred, goles_local_pred, goles_visitante_pred")
                                         .eq("partido_id", p["id"])
                                         .execute()
                                         .data or []
                                     )
                                     for pr in prons:
-                                        pts = 3 if pr["signo_pred"] == signo_r else 0
+                                        gl_pr = pr.get("goles_local_pred")
+                                        gv_pr = pr.get("goles_visitante_pred")
+                                        if gl_pr is not None and gv_pr is not None and gl_pr == int(gl_new) and gv_pr == int(gv_new):
+                                            pts = 3
+                                        elif pr["signo_pred"] == signo_r:
+                                            pts = 1
+                                        else:
+                                            pts = 0
                                         sb.table("pronosticos").update({"puntos": pts}).eq("id", pr["id"]).execute()
 
                                     cargar_partidos.clear()
