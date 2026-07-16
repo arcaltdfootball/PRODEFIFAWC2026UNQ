@@ -51,14 +51,6 @@ st.markdown(
         margin-bottom: 1.6rem; letter-spacing: 2px; text-transform: uppercase;
     }
 
-    .fecha-slider-wrap {
-        max-width: 580px; margin: 0 auto 6px;
-        background: rgba(15,23,42,0.55);
-        backdrop-filter: blur(14px);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 18px;
-        padding: 18px 24px 14px;
-    }
     .fecha-slider-label {
         font-family: 'Bebas Neue', sans-serif;
         font-size: 1.05rem; color: #e2e8f0; letter-spacing: 3px;
@@ -191,18 +183,6 @@ st.markdown(
     }
     .pron-strip b { color: #e8c96b; }
 
-    .nav-wrapper {
-        background: rgba(12,20,38,0.65);
-        backdrop-filter: blur(14px);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 18px; padding: 14px 22px;
-        max-width: 580px; margin: 0 auto 6px;
-    }
-    .nav-label {
-        font-size: 0.68rem; color: #475569; text-align: center;
-        text-transform: uppercase; letter-spacing: 2px;
-        margin-bottom: 12px;
-    }
     .match-dots-row {
         display: flex; justify-content: center;
         gap: 8px; align-items: center; flex-wrap: wrap;
@@ -335,22 +315,20 @@ def fecha_dot_color(dist):
     return "rgba(255,255,255,0.15)"
 
 
-st.markdown(
-    f'<div class="fecha-slider-wrap">'
-    f'<div class="fecha-slider-label">📍 FECHA {fecha_sel}'
-    f'<div class="fecha-slider-sub">estás parado acá</div></div>',
-    unsafe_allow_html=True
-)
+with st.container(key="fecha_wrap"):
+    st.markdown(
+        f'<div class="fecha-slider-label">FECHA {fecha_sel}'
+        f'<div class="fecha-slider-sub">estás parado acá</div></div>',
+        unsafe_allow_html=True
+    )
 
-fecha_cols = st.columns(total_fechas)
-for i, f in enumerate(fechas_disponibles):
-    with fecha_cols[i]:
-        if st.button("●", key=f"fdot_{zona_sel}_{f}", help=f"Ir a la fecha {f}"):
-            st.session_state[key_fecha] = f
-            st.session_state[f"idx_{zona_sel}_{f}"] = 0
-            st.rerun()
-
-st.markdown("</div>", unsafe_allow_html=True)
+    fecha_cols = st.columns(total_fechas)
+    for i, f in enumerate(fechas_disponibles):
+        with fecha_cols[i]:
+            if st.button("●", key=f"fdot_{zona_sel}_{f}", help=f"Ir a la fecha {f}"):
+                st.session_state[key_fecha] = f
+                st.session_state[f"idx_{zona_sel}_{f}"] = 0
+                st.rerun()
 
 # ── CSS: cada punto se targetea por su propia clase st-key-<key> (mecanismo
 # oficial de Streamlit: todo widget con key= recibe la clase .st-key-<key>) ──
@@ -375,6 +353,14 @@ for i, f in enumerate(fechas_disponibles):
 st.markdown(
     f"""
     <style>
+    .st-key-fecha_wrap {{
+        max-width: 580px; margin: 0 auto 6px;
+        background: rgba(15,23,42,0.55);
+        backdrop-filter: blur(14px);
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 18px;
+        padding: 18px 24px 16px;
+    }}
     div[data-testid="stHorizontalBlock"]:has([class*="st-key-fdot_"]) {{
         gap: 6px !important; align-items: center !important;
         flex-wrap: wrap !important; justify-content: center !important;
@@ -407,14 +393,7 @@ if idx >= total:
     idx = 0
     st.session_state[key_idx] = 0
 
-# ── Navegación de partidos (mini-cards con escudos reales, arriba de la card grande) ──
-st.markdown(
-    '<div class="nav-wrapper">'
-    '<div class="nav-label">👉 Elegí un partido de esta fecha (hay '
-    f'{total})</div>',
-    unsafe_allow_html=True
-)
-
+# ── Navegación de partidos (mini-cards con escudos reales) ────────────────
 dot_cols = st.columns(total)
 _card_keys = []
 for i in range(total):
@@ -448,9 +427,7 @@ for i in range(total):
             st.session_state[key_idx] = i
             st.rerun()
 
-st.markdown("</div>", unsafe_allow_html=True)
 
-# ── CSS: la card visual (escudos) queda fija; el botón real (invisible) se
 # sube encima con margin negativo, targeteado por su propia clase st-key-<key> ──
 _card_rules = []
 for btn_key in _card_keys:
