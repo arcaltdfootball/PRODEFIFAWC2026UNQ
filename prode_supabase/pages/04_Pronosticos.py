@@ -346,6 +346,9 @@ def etiqueta_zona(z):
     return "Interzonal" if z == "Interzonal" else f"Zona {z}"
 
 
+VIOLET = "#a78bfa"
+
+
 # ── Escudos ───────────────────────────────────────────────────────────────────────────
 def escudo_html(equipo, size=56):
     url = url_escudo(equipo)
@@ -544,17 +547,43 @@ for tab, zona in zip(tabs_zona, zonas_lista):
             unsafe_allow_html=True,
         )
 
-        # ── Selector de fecha ────────────────────────────────────────────────
+        # ── Selector de fecha (pills compactas, no estiradas) ────────────────
         cols_fecha = st.columns(len(fechas_zona))
+        _fecha_btn_keys = []
         for i, f in enumerate(fechas_zona):
             with cols_fecha[i]:
                 es_activa = (f == st.session_state[key_fecha])
-                if st.button(f"Fecha {f}", key=f"pron_fbtn_{zona}_{f}",
-                             use_container_width=True,
+                btn_key_f = f"pron_fbtn_{zona}_{f}"
+                _fecha_btn_keys.append(btn_key_f)
+                if st.button(f"Fecha {f}", key=btn_key_f,
                              type="primary" if es_activa else "secondary"):
                     st.session_state[key_fecha] = f
                     st.session_state[f"pron_idx_{zona}_{f}"] = 0
                     st.rerun()
+
+        # CSS: las columnas dejan de repartirse el ancho completo y el botón
+        # queda como una pill chica, en vez de un rectángulo largo y estirado.
+        st.markdown(
+            f"""
+            <style>
+            div[data-testid="stHorizontalBlock"]:has([class*="st-key-pron_fbtn_{zona}_"]) {{
+                gap: 8px !important; flex-wrap: wrap !important; justify-content: center !important;
+            }}
+            div[data-testid="stHorizontalBlock"]:has([class*="st-key-pron_fbtn_{zona}_"])
+                > div[data-testid="column"] {{
+                width: auto !important; flex: 0 0 auto !important; min-width: 0 !important;
+            }}
+            {"".join(
+                f'.st-key-{k} button {{ '
+                f'padding: 4px 16px !important; height: 32px !important; min-height: 0 !important; '
+                f'border-radius: 10px !important; font-size: 0.78rem !important; '
+                f'letter-spacing: 0.5px !important; }}'
+                for k in _fecha_btn_keys
+            )}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
         fecha_sel = st.session_state[key_fecha]
 
@@ -582,17 +611,110 @@ for tab, zona in zip(tabs_zona, zonas_lista):
         gl_real   = p.get("goles_local")
         gv_real   = p.get("goles_visitante")
 
-        # ── Botones de selección directa de partido ──────────────────────────
-        btn_cols = st.columns(total)
+        # ── Selección de partido con mini-cards de escudos (idéntico a
+        # 01_Resultados.py): recuadro compacto con escudo · vs · escudo,
+        # 100% clickeable ──────────────────────────────────────────────────
+        dot_cols = st.columns(total)
+        _card_keys = []
         for i, part in enumerate(lista_part):
-            with btn_cols[i]:
-                es_actual = i == idx
-                lbl = f"{part['equipo_local'][:3].upper()} vs {part['equipo_visitante'][:3].upper()}"
-                if st.button(lbl, key=f"pron_sel_{zona}_{fecha_sel}_{i}",
-                             use_container_width=True,
-                             type="primary" if es_actual else "secondary"):
-                    st.session_state[key_idx] = i
-                    st.rerun()
+            with dot_cols[i]:
+                esc_l = url_escudo(part["equipo_local"])
+                esc_v = url_escudo(part["equipo_visitante"])
+                es_actual = (i == idx)
+
+                img_l = (
+                    f'<img src="{esc_l}" class="match-card-escudo">'
+                    if esc_l else '<span class="match-card-fallback">🛡️</span>'
+                )
+                img_v = (
+                    f'<img src="{esc_v}" class="match-card-escudo">'
+                    if esc_v else '<span class="match-card-fallback">🛡️</span>'
+                )
+
+                btn_key = f"pron_sel_{zona}_{fecha_sel}_{i}"
+                _card_keys.append(btn_key)
+
+                # escudo + botón viven en el MISMO contenedor: el botón se
+                # superpone con position:absolute cubriendo el 100% del
+                # recuadro (ver nota de CSS más abajo).
+                with st.container(key=f"cardwrap_{btn_key}"):
+                    st.markdown(
+                        f'<div class="match-card {"active" if es_actual else ""}">'
+                        f'{img_l}<span class="match-card-vs">vs</span>{img_v}'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    help_txt = f"{part['equipo_local']} vs {part['equipo_visitante']}"
+                    if part.get("hora"):
+                        help_txt += f" · {part['hora']}"
+                    if st.button(" ", key=btn_key, help=help_txt):
+                        st.session_state[key_idx] = i
+                        st.rerun()
+
+        # CSS: reseteamos a "static" todo lo interno del wrapper (Streamlit le
+        # pone "position: relative" a sus propios divs, lo que rompía el área
+        # de click si no se neutraliza) y recién ahí el botón se estira con
+        # position:absolute/inset:0 para cubrir TODO el recuadro.
+        _card_rules = []
+        for btn_key in _card_keys:
+            _card_rules.append(f'.st-key-cardwrap_{btn_key} * {{ position: static !important; }}')
+            _card_rules.append(
+                f'.st-key-cardwrap_{btn_key} {{ '
+                f'position: relative !important; width: 78px !important; margin: 0 auto !important; '
+                f'cursor: pointer !important; }}'
+            )
+            _card_rules.append(
+                f'.st-key-cardwrap_{btn_key} [data-testid="stButton"] {{ '
+                f'position: absolute !important; inset: 0 !important; '
+                f'width: 100% !important; height: 100% !important; z-index: 5 !important; }}'
+            )
+            _card_rules.append(
+                f'.st-key-cardwrap_{btn_key} button {{ '
+                f'position: absolute !important; inset: 0 !important; '
+                f'width: 100% !important; height: 100% !important; min-height: 0 !important; '
+                f'padding: 0 !important; background: transparent !important; '
+                f'border: none !important; opacity: 0 !important; cursor: pointer !important; }}'
+            )
+
+        st.markdown(
+            f"""
+            <style>
+            div[data-testid="stHorizontalBlock"]:has([class*="st-key-cardwrap_"]) {{
+                gap: 8px !important; align-items: flex-start !important;
+                flex-wrap: wrap !important; justify-content: center !important;
+            }}
+            .match-card {{
+                display: flex; align-items: center; justify-content: center; gap: 6px;
+                width: 78px; height: 54px; border-radius: 14px;
+                background: rgba(15,23,42,0.65);
+                border: 1.5px solid rgba(255,255,255,0.10);
+                transition: all 0.18s ease;
+                margin: 0 auto; position: relative; z-index: 1;
+                pointer-events: none;
+            }}
+            .match-card.active {{
+                background: rgba(167,139,250,0.20);
+                border-color: {VIOLET};
+                box-shadow: 0 0 0 2px {VIOLET}55, 0 6px 16px rgba(167,139,250,0.35);
+                transform: scale(1.06);
+            }}
+            .match-card-escudo {{
+                width: 24px; height: 24px; object-fit: contain;
+                filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+            }}
+            .match-card-fallback {{ font-size: 18px; opacity: 0.6; }}
+            .match-card-vs {{
+                font-family: 'Bebas Neue', sans-serif; font-size: 0.55rem;
+                color: rgba(255,255,255,0.35); letter-spacing: 1px;
+            }}
+            [class*="st-key-cardwrap_"]:hover .match-card {{
+                border-color: {VIOLET}; transform: scale(1.04);
+            }}
+            {"".join(_card_rules)}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
 
         # ── Botones prev / next (ARRIBA) ─────────────────────────────────────
         _, col_prev_top, _, col_next_top, _ = st.columns([1, 1, 4, 1, 1])
