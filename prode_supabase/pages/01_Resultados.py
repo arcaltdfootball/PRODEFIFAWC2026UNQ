@@ -342,47 +342,49 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-with st.container(key="fecha_dots_container"):
-    fecha_cols = st.columns(total_fechas)
-    for i, f in enumerate(fechas_disponibles):
-        with fecha_cols[i]:
-            if st.button("●", key=f"fdot_{zona_sel}_{f}", help=f"Ir a la fecha {f}"):
-                st.session_state[key_fecha] = f
-                st.session_state[f"idx_{zona_sel}_{f}"] = 0
-                st.rerun()
+fecha_cols = st.columns(total_fechas)
+for i, f in enumerate(fechas_disponibles):
+    with fecha_cols[i]:
+        if st.button("●", key=f"fdot_{zona_sel}_{f}", help=f"Ir a la fecha {f}"):
+            st.session_state[key_fecha] = f
+            st.session_state[f"idx_{zona_sel}_{f}"] = 0
+            st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
+# ── CSS: cada punto se targetea por su propia clase st-key-<key> (mecanismo
+# oficial de Streamlit: todo widget con key= recibe la clase .st-key-<key>) ──
 _fecha_rules = []
-for i in range(total_fechas):
+for i, f in enumerate(fechas_disponibles):
     dist = abs(i - fecha_idx)
     size = fecha_dot_size(dist)
     color = fecha_dot_color(dist)
     is_active = (dist == 0)
-    glow = "0 0 14px rgba(167,139,250,0.75)" if is_active else "none"
-    border = "2px solid rgba(255,255,255,0.85)" if is_active else "none"
+    glow = "box-shadow: 0 0 16px rgba(167,139,250,0.85) !important;" if is_active else "box-shadow: none !important;"
+    border = "border: 2px solid rgba(255,255,255,0.9) !important;" if is_active else "border: none !important;"
+    btn_key = f"fdot_{zona_sel}_{f}"
     _fecha_rules.append(
-        f'.st-key-fecha_dots_container div[data-testid="column"]:nth-child({i+1}) button {{ '
-        f'width:{size}px !important; height:{size}px !important; min-height:0 !important; '
+        f'.st-key-{btn_key} button {{ '
+        f'width:{size}px !important; height:{size}px !important; '
+        f'min-height:0 !important; min-width:0 !important; '
         f'border-radius:50% !important; padding:0 !important; '
         f'background:{color} !important; color:transparent !important; '
-        f'border:{border} !important; box-shadow:{glow} !important; '
-        f'transition: all 0.2s ease; }}'
+        f'{border} {glow} transition: all 0.2s ease; margin:0 auto !important; }}'
     )
 
 st.markdown(
     f"""
     <style>
-    .st-key-fecha_dots_container div[data-testid="stHorizontalBlock"] {{
-        gap: 7px !important; align-items: center !important;
+    div[data-testid="stHorizontalBlock"]:has([class*="st-key-fdot_"]) {{
+        gap: 6px !important; align-items: center !important;
         flex-wrap: wrap !important; justify-content: center !important;
     }}
     {"".join(_fecha_rules)}
-    .st-key-fecha_dots_container div[data-testid="column"] button:hover {{
-        transform: scale(1.25) !important;
+    [class*="st-key-fdot_"] button:hover {{
+        transform: scale(1.3) !important;
         background: {VIOLET} !important;
     }}
-    .st-key-fecha_dots_container button p {{ visibility: hidden; }}
+    [class*="st-key-fdot_"] button p {{ visibility: hidden; }}
     </style>
     """,
     unsafe_allow_html=True
@@ -413,60 +415,70 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-with st.container(key="partido_dots_container"):
-    dot_cols = st.columns(total)
-    for i in range(total):
-        with dot_cols[i]:
-            p_i = lista_partidos[i]
-            esc_l = get_escudo(p_i["equipo_local"])
-            esc_v = get_escudo(p_i["equipo_visitante"])
-            is_active = (i == idx)
+dot_cols = st.columns(total)
+_card_keys = []
+for i in range(total):
+    with dot_cols[i]:
+        p_i = lista_partidos[i]
+        esc_l = get_escudo(p_i["equipo_local"])
+        esc_v = get_escudo(p_i["equipo_visitante"])
+        is_active = (i == idx)
 
-            img_l = (
-                f'<img src="{esc_l}" class="match-card-escudo">'
-                if esc_l else '<span class="match-card-fallback">🛡️</span>'
-            )
-            img_v = (
-                f'<img src="{esc_v}" class="match-card-escudo">'
-                if esc_v else '<span class="match-card-fallback">🛡️</span>'
-            )
-            st.markdown(
-                f'<div class="match-card {"active" if is_active else ""}">'
-                f'{img_l}<span class="match-card-vs">vs</span>{img_v}'
-                f'</div>',
-                unsafe_allow_html=True
-            )
+        img_l = (
+            f'<img src="{esc_l}" class="match-card-escudo">'
+            if esc_l else '<span class="match-card-fallback">🛡️</span>'
+        )
+        img_v = (
+            f'<img src="{esc_v}" class="match-card-escudo">'
+            if esc_v else '<span class="match-card-fallback">🛡️</span>'
+        )
+        st.markdown(
+            f'<div class="match-card {"active" if is_active else ""}">'
+            f'{img_l}<span class="match-card-vs">vs</span>{img_v}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
-            help_txt = f"{p_i['equipo_local']} vs {p_i['equipo_visitante']}"
-            if p_i.get("hora"):
-                help_txt += f" · {p_i['hora']}"
-            if st.button(" ", key=f"mdot_{zona_sel}_{fecha_sel}_{i}", help=help_txt):
-                st.session_state[key_idx] = i
-                st.rerun()
+        help_txt = f"{p_i['equipo_local']} vs {p_i['equipo_visitante']}"
+        if p_i.get("hora"):
+            help_txt += f" · {p_i['hora']}"
+        btn_key = f"mdot_{zona_sel}_{fecha_sel}_{i}"
+        _card_keys.append(btn_key)
+        if st.button(" ", key=btn_key, help=help_txt):
+            st.session_state[key_idx] = i
+            st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
+
+# ── CSS: la card visual (escudos) queda fija; el botón real (invisible) se
+# sube encima con margin negativo, targeteado por su propia clase st-key-<key> ──
+_card_rules = []
+for btn_key in _card_keys:
+    _card_rules.append(
+        f'.st-key-{btn_key} {{ '
+        f'margin-top: -60px !important; position: relative !important; z-index: 5 !important; }}'
+    )
+    _card_rules.append(
+        f'.st-key-{btn_key} button {{ '
+        f'width: 100% !important; height: 54px !important; min-height: 0 !important; '
+        f'padding: 0 !important; background: transparent !important; '
+        f'border: none !important; opacity: 0 !important; cursor: pointer; }}'
+    )
 
 st.markdown(
     f"""
     <style>
-    .st-key-partido_dots_container div[data-testid="stHorizontalBlock"] {{
-        gap: 8px !important; align-items: stretch !important;
+    div[data-testid="stHorizontalBlock"]:has([class*="st-key-mdot_"]) {{
+        gap: 8px !important; align-items: flex-start !important;
         flex-wrap: wrap !important; justify-content: center !important;
     }}
-    .st-key-partido_dots_container div[data-testid="column"] {{
-        position: relative;
-    }}
-    .st-key-partido_dots_container div[data-testid="column"] div[data-testid="stVerticalBlock"] {{
-        position: relative;
-    }}
-    /* La card con los escudos (1er elemento) queda visible y no clickeable */
     .match-card {{
         display: flex; align-items: center; justify-content: center; gap: 6px;
         width: 78px; height: 54px; border-radius: 14px;
         background: rgba(15,23,42,0.65);
         border: 1.5px solid rgba(255,255,255,0.10);
         transition: all 0.18s ease;
-        margin: 0 auto;
+        margin: 0 auto; position: relative; z-index: 1;
     }}
     .match-card.active {{
         background: rgba(167,139,250,0.20);
@@ -483,19 +495,7 @@ st.markdown(
         font-family: 'Bebas Neue', sans-serif; font-size: 0.55rem;
         color: rgba(255,255,255,0.35); letter-spacing: 1px;
     }}
-    /* El botón (2do elemento) se estira encima de la card y queda invisible pero clickeable */
-    .st-key-partido_dots_container div[data-testid="column"] div[data-testid="element-container"]:nth-child(2) {{
-        position: absolute !important; inset: 0 !important; z-index: 5 !important;
-    }}
-    .st-key-partido_dots_container div[data-testid="column"] div[data-testid="element-container"]:nth-child(2) button {{
-        width: 100% !important; height: 100% !important; min-height: 0 !important;
-        padding: 0 !important; background: transparent !important;
-        border: none !important; opacity: 0 !important; cursor: pointer;
-    }}
-    .st-key-partido_dots_container div[data-testid="column"]:hover .match-card {{
-        transform: scale(1.08);
-        border-color: {CYAN};
-    }}
+    {"".join(_card_rules)}
     </style>
     """,
     unsafe_allow_html=True
