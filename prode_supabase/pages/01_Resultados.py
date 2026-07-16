@@ -411,41 +411,54 @@ for i in range(total):
             f'<img src="{esc_v}" class="match-card-escudo">'
             if esc_v else '<span class="match-card-fallback">🛡️</span>'
         )
-        st.markdown(
-            f'<div class="match-card {"active" if is_active else ""}">'
-            f'{img_l}<span class="match-card-vs">vs</span>{img_v}'
-            f'</div>',
-            unsafe_allow_html=True
-        )
 
-        help_txt = f"{p_i['equipo_local']} vs {p_i['equipo_visitante']}"
-        if p_i.get("hora"):
-            help_txt += f" · {p_i['hora']}"
         btn_key = f"mdot_{zona_sel}_{fecha_sel}_{i}"
         _card_keys.append(btn_key)
-        if st.button(" ", key=btn_key, help=help_txt):
-            st.session_state[key_idx] = i
-            st.rerun()
+
+        # escudo + botón viven en el MISMO contenedor: así el botón puede
+        # superponerse con position:absolute cubriendo el 100% del recuadro,
+        # en vez de depender de un margin-top negativo (frágil y desalineado).
+        with st.container(key=f"cardwrap_{btn_key}"):
+            st.markdown(
+                f'<div class="match-card {"active" if is_active else ""}">'
+                f'{img_l}<span class="match-card-vs">vs</span>{img_v}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+            help_txt = f"{p_i['equipo_local']} vs {p_i['equipo_visitante']}"
+            if p_i.get("hora"):
+                help_txt += f" · {p_i['hora']}"
+            if st.button(" ", key=btn_key, help=help_txt):
+                st.session_state[key_idx] = i
+                st.rerun()
 
 
-# sube encima con margin negativo, targeteado por su propia clase st-key-<key> ──
+# el botón se estira con position:absolute/inset:0 para cubrir TODO el
+# recuadro del wrapper (mismo contenedor que el escudo), targeteado por su
+# propia clase st-key-cardwrap_<key> ──
 _card_rules = []
 for btn_key in _card_keys:
     _card_rules.append(
-        f'.st-key-{btn_key} {{ '
-        f'margin-top: -60px !important; position: relative !important; z-index: 5 !important; }}'
+        f'.st-key-cardwrap_{btn_key} {{ '
+        f'position: relative !important; width: 78px !important; margin: 0 auto !important; }}'
     )
     _card_rules.append(
-        f'.st-key-{btn_key} button {{ '
-        f'width: 100% !important; height: 54px !important; min-height: 0 !important; '
+        f'.st-key-cardwrap_{btn_key} [data-testid="stButton"] {{ '
+        f'position: absolute !important; inset: 0 !important; '
+        f'width: 100% !important; height: 100% !important; z-index: 5 !important; }}'
+    )
+    _card_rules.append(
+        f'.st-key-cardwrap_{btn_key} button {{ '
+        f'width: 100% !important; height: 100% !important; min-height: 0 !important; '
         f'padding: 0 !important; background: transparent !important; '
-        f'border: none !important; opacity: 0 !important; cursor: pointer; }}'
+        f'border: none !important; opacity: 0 !important; cursor: pointer !important; }}'
     )
 
 st.markdown(
     f"""
     <style>
-    div[data-testid="stHorizontalBlock"]:has([class*="st-key-mdot_"]) {{
+    div[data-testid="stHorizontalBlock"]:has([class*="st-key-cardwrap_"]) {{
         gap: 8px !important; align-items: flex-start !important;
         flex-wrap: wrap !important; justify-content: center !important;
     }}
@@ -456,6 +469,7 @@ st.markdown(
         border: 1.5px solid rgba(255,255,255,0.10);
         transition: all 0.18s ease;
         margin: 0 auto; position: relative; z-index: 1;
+        pointer-events: none; /* los clicks pasan al botón que está encima */
     }}
     .match-card.active {{
         background: rgba(167,139,250,0.20);
@@ -471,6 +485,9 @@ st.markdown(
     .match-card-vs {{
         font-family: 'Bebas Neue', sans-serif; font-size: 0.55rem;
         color: rgba(255,255,255,0.35); letter-spacing: 1px;
+    }}
+    [class*="st-key-cardwrap_"]:hover .match-card {{
+        border-color: {VIOLET}; transform: scale(1.04);
     }}
     {"".join(_card_rules)}
     </style>
