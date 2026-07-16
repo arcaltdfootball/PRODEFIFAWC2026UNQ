@@ -167,6 +167,7 @@ try:
     ranking = obtener_ranking()
 except Exception as e:
     st.error(f"Error al conectar con la base de datos: {e}")
+    st.exception(e)
     st.stop()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
