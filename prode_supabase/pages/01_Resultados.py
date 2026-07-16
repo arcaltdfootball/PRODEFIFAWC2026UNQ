@@ -61,25 +61,18 @@ st.markdown(
     }
     .fecha-slider-label {
         font-family: 'Bebas Neue', sans-serif;
-        font-size: 1.05rem; color: #e8c96b; letter-spacing: 3px;
-        text-align: center; margin-bottom: 14px;
+        font-size: 1.05rem; color: #e2e8f0; letter-spacing: 3px;
+        text-align: center; margin-bottom: 4px;
+    }
+    .fecha-slider-sub {
+        font-family: 'DM Sans', sans-serif;
+        font-size: 0.62rem; color: #94a3b8; letter-spacing: 1px;
+        text-transform: none;
     }
     .fecha-dots-row {
         display: flex; align-items: center; justify-content: center;
         gap: 5px; flex-wrap: wrap;
     }
-    .fdot {
-        border-radius: 50%;
-        background: rgba(255,255,255,0.15);
-        cursor: pointer;
-        transition: all 0.2s ease;
-        border: none; padding: 0;
-        flex-shrink: 0;
-    }
-    .fdot:hover { background: rgba(232,201,107,0.45); transform: scale(1.15); }
-    .fdot.active { background: #e8c96b !important; box-shadow: 0 0 12px rgba(232,201,107,0.55); }
-    .fdot.near   { background: rgba(232,201,107,0.5); }
-    .fdot.medium { background: rgba(232,201,107,0.28); }
 
     .outer-card {
         background: rgba(16,26,46,0.65);
@@ -214,20 +207,6 @@ st.markdown(
         display: flex; justify-content: center;
         gap: 8px; align-items: center; flex-wrap: wrap;
     }
-    .mdot {
-        border-radius: 50%; cursor: pointer;
-        border: 2px solid transparent;
-        transition: all 0.18s ease;
-        padding: 0; background: rgba(255,255,255,0.15);
-        flex-shrink: 0;
-    }
-    .mdot:hover { transform: scale(1.25); background: rgba(232,201,107,0.4); }
-    .mdot.active {
-        background: #e8c96b !important;
-        border-color: rgba(232,201,107,0.5);
-        box-shadow: 0 0 14px rgba(232,201,107,0.6);
-        transform: scale(1.35);
-    }
     .nav-counter {
         font-size: 0.72rem; color: #475569;
         text-align: center; margin-top: 10px; letter-spacing: 1px;
@@ -336,23 +315,38 @@ fecha_sel = st.session_state[key_fecha]
 fecha_idx = fechas_disponibles.index(fecha_sel)
 
 
-def dot_size(dist):
-    if dist == 0: return 22
-    if dist == 1: return 17
-    if dist == 2: return 13
-    if dist == 3: return 10
-    return 8
+CYAN = "#22d3ee"
+VIOLET = "#a78bfa"
 
-def dot_color(dist):
-    if dist == 0: return "#e8c96b"
-    if dist == 1: return "rgba(232,201,107,0.5)"
-    if dist == 2: return "rgba(232,201,107,0.28)"
-    return "rgba(255,255,255,0.15)"
+
+def _lerp_hex(c1, c2, t):
+    c1, c2 = c1.lstrip("#"), c2.lstrip("#")
+    r1, g1, b1 = int(c1[0:2], 16), int(c1[2:4], 16), int(c1[4:6], 16)
+    r2, g2, b2 = int(c2[0:2], 16), int(c2[2:4], 16), int(c2[4:6], 16)
+    r = round(r1 + (r2 - r1) * t)
+    g = round(g1 + (g2 - g1) * t)
+    b = round(b1 + (b2 - b1) * t)
+    return f"rgb({r},{g},{b})"
+
+
+def fecha_dot_size(i, total):
+    """El punto va creciendo a medida que avanzan las fechas."""
+    if total <= 1:
+        return 20
+    t = i / (total - 1)
+    return round(10 + t * 14)  # 10px (fecha 1) -> 24px (última fecha)
+
+
+def fecha_dot_color(i, total):
+    """Degradé celeste -> violeta a medida que avanzan las fechas."""
+    t = i / (total - 1) if total > 1 else 0
+    return _lerp_hex(CYAN, VIOLET, t)
 
 
 st.markdown(
     f'<div class="fecha-slider-wrap">'
-    f'<div class="fecha-slider-label">FECHA {fecha_sel}</div>',
+    f'<div class="fecha-slider-label">📍 FECHA {fecha_sel}'
+    f'<div class="fecha-slider-sub">estás parado acá</div></div>',
     unsafe_allow_html=True
 )
 
@@ -360,29 +354,60 @@ with st.container(key="fecha_dots_container"):
     fecha_cols = st.columns(total_fechas)
     for i, f in enumerate(fechas_disponibles):
         with fecha_cols[i]:
-            if st.button("●", key=f"fdot_{zona_sel}_{f}", help=f"Fecha {f}"):
+            if st.button("●", key=f"fdot_{zona_sel}_{f}", help=f"Ir a la fecha {f}"):
                 st.session_state[key_fecha] = f
                 st.session_state[f"idx_{zona_sel}_{f}"] = 0
                 st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
+_fecha_rules = []
+for i, f in enumerate(fechas_disponibles):
+    size = fecha_dot_size(i, total_fechas)
+    color = fecha_dot_color(i, total_fechas)
+    is_active = (i == fecha_idx)
+    if is_active:
+        active_size = size + 10
+        _fecha_rules.append(
+            f'.st-key-fecha_dots_container div[data-testid="column"]:nth-child({i+1}) button {{ '
+            f'width:{active_size}px !important; height:{active_size}px !important; min-height:0 !important; '
+            f'border-radius:50% !important; padding:0 !important; '
+            f'background:{color} !important; opacity:1 !important; color:transparent !important; '
+            f'border:2px solid rgba(255,255,255,0.9) !important; '
+            f'animation: fpulse 1.8s ease-in-out infinite; }}'
+        )
+    else:
+        _fecha_rules.append(
+            f'.st-key-fecha_dots_container div[data-testid="column"]:nth-child({i+1}) button {{ '
+            f'width:{size}px !important; height:{size}px !important; min-height:0 !important; '
+            f'border-radius:50% !important; padding:0 !important; '
+            f'background:{color} !important; opacity:0.55 !important; color:transparent !important; '
+            f'border:none !important; box-shadow:none !important; transition: all 0.2s ease; }}'
+        )
+
 st.markdown(
     f"""
     <style>
     .st-key-fecha_dots_container div[data-testid="stHorizontalBlock"] {{
-        gap: 4px !important; align-items: center !important;
+        gap: 7px !important; align-items: center !important;
         flex-wrap: wrap !important; justify-content: center !important;
+        position: relative; padding: 8px 0 2px;
     }}
-    {"".join([
-        f'.st-key-fecha_dots_container div[data-testid="column"]:nth-child({i+1}) button '
-        f'{{ width:{dot_size(abs(i - fecha_idx))}px !important; height:{dot_size(abs(i - fecha_idx))}px !important; '
-        f'min-height:0 !important; border-radius:50% !important; padding:0 !important; '
-        f'background:{dot_color(abs(i - fecha_idx))} !important; color:transparent !important; '
-        f'border:none !important; box-shadow:{"0 0 12px rgba(232,201,107,0.6)" if i == fecha_idx else "none"} !important; }}'
-        for i in range(total_fechas)
-    ])}
+    .st-key-fecha_dots_container div[data-testid="stHorizontalBlock"]::before {{
+        content: ''; position: absolute; left: 4%; right: 4%; top: 50%;
+        height: 2px; transform: translateY(-50%);
+        background: linear-gradient(90deg, {CYAN}66, {VIOLET}66);
+        z-index: -1; border-radius: 2px;
+    }}
+    {"".join(_fecha_rules)}
+    .st-key-fecha_dots_container div[data-testid="column"] button:hover {{
+        opacity: 1 !important; transform: scale(1.3) !important;
+    }}
     .st-key-fecha_dots_container button p {{ visibility: hidden; }}
+    @keyframes fpulse {{
+        0%, 100% {{ box-shadow: 0 0 0 4px rgba(167,139,250,0.25), 0 0 14px rgba(56,189,248,0.6); }}
+        50%      {{ box-shadow: 0 0 0 8px rgba(56,189,248,0.18), 0 0 26px rgba(167,139,250,0.7); }}
+    }}
     </style>
     """,
     unsafe_allow_html=True
@@ -405,12 +430,11 @@ if idx >= total:
     idx = 0
     st.session_state[key_idx] = 0
 
-# ── Navegación de partidos (arriba de la card de escudos) ────────────────
+# ── Navegación de partidos (mini-cards con escudos, arriba de la card grande) ──
 st.markdown(
     '<div class="nav-wrapper">'
     '<div class="nav-label">👉 Elegí un partido de esta fecha (hay '
-    f'{total})</div>'
-    '<div class="match-dots-row" id="match-dots-row">',
+    f'{total})</div>',
     unsafe_allow_html=True
 )
 
@@ -418,34 +442,66 @@ with st.container(key="partido_dots_container"):
     dot_cols = st.columns(total)
     for i in range(total):
         with dot_cols[i]:
-            is_active = (i == idx)
-            if st.button(
-                "●" if is_active else "○",
-                key=f"mdot_{zona_sel}_{fecha_sel}_{i}",
-                help=f"Partido {i+1}: {lista_partidos[i]['equipo_local']} vs {lista_partidos[i]['equipo_visitante']}"
-            ):
+            p_i = lista_partidos[i]
+            help_txt = f"{p_i['equipo_local']} vs {p_i['equipo_visitante']}"
+            if p_i.get("hora"):
+                help_txt += f" · {p_i['hora']}"
+            if st.button(" ", key=f"mdot_{zona_sel}_{fecha_sel}_{i}", help=help_txt):
                 st.session_state[key_idx] = i
                 st.rerun()
 
-st.markdown("</div></div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+_card_rules = []
+for i in range(total):
+    p_i = lista_partidos[i]
+    esc_l = get_escudo(p_i["equipo_local"]) or ""
+    esc_v = get_escudo(p_i["equipo_visitante"]) or ""
+    is_active = (i == idx)
+
+    bg_imgs = [f"url('{u}')" for u in (esc_l, esc_v) if u]
+    bg_img_css = ", ".join(bg_imgs) if bg_imgs else "none"
+    n_imgs = max(len(bg_imgs), 1)
+
+    border_col = VIOLET if is_active else "rgba(255,255,255,0.10)"
+    card_bg = "rgba(167,139,250,0.16)" if is_active else "rgba(15,23,42,0.6)"
+    glow = (
+        f"0 0 0 2px {CYAN}, 0 6px 18px rgba(167,139,250,0.35)"
+        if is_active else "none"
+    )
+    _card_rules.append(
+        f'.st-key-partido_dots_container div[data-testid="column"]:nth-child({i+1}) button {{ '
+        f'width:78px !important; height:54px !important; min-height:0 !important; '
+        f'border-radius:14px !important; padding:0 !important; position:relative !important; '
+        f'background-color:{card_bg} !important; '
+        f'background-image:{bg_img_css} !important; '
+        f'background-repeat:{", ".join(["no-repeat"] * n_imgs)} !important; '
+        f'background-position:16% center, 84% center !important; '
+        f'background-size:24px 24px, 24px 24px !important; '
+        f'border:1.5px solid {border_col} !important; '
+        f'box-shadow:{glow} !important; '
+        f'transform:{"scale(1.06)" if is_active else "scale(1)"} !important; '
+        f'transition: all 0.18s ease; }}'
+    )
 
 st.markdown(
     f"""
     <style>
     .st-key-partido_dots_container div[data-testid="stHorizontalBlock"] {{
-        gap: 6px !important; align-items: center !important;
+        gap: 8px !important; align-items: center !important;
         flex-wrap: wrap !important; justify-content: center !important;
     }}
-    {"".join([
-        f'.st-key-partido_dots_container div[data-testid="column"]:nth-child({i+1}) button '
-        f'{{ width:14px !important; height:14px !important; min-height:0 !important; '
-        f'border-radius:50% !important; padding:0 !important; '
-        f'background:{"#e8c96b" if i==idx else "rgba(255,255,255,0.18)"} !important; '
-        f'color:transparent !important; border:none !important; '
-        f'box-shadow:{"0 0 12px rgba(232,201,107,0.6)" if i==idx else "none"} !important; '
-        f'transform:{"scale(1.4)" if i==idx else "scale(1)"} !important; }}'
-        for i in range(total)
-    ])}
+    {"".join(_card_rules)}
+    .st-key-partido_dots_container div[data-testid="column"] button::after {{
+        content: 'VS'; position: absolute; top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        font-family: 'Bebas Neue', sans-serif; font-size: 0.5rem;
+        color: rgba(255,255,255,0.32); letter-spacing: 1px; pointer-events: none;
+    }}
+    .st-key-partido_dots_container div[data-testid="column"] button:hover {{
+        transform: scale(1.08) !important;
+        border-color: {CYAN} !important;
+    }}
     .st-key-partido_dots_container button p {{ visibility: hidden; }}
     </style>
     """,
