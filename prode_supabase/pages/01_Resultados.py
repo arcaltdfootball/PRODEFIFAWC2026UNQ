@@ -318,7 +318,7 @@ def fecha_dot_color(dist):
 with st.container(key="fecha_wrap"):
     st.markdown(
         f'<div class="fecha-slider-label">FECHA {fecha_sel}'
-        f'<div class="fecha-slider-sub">estás parado acá</div></div>',
+        f'<div class="fecha-slider-sub">SELECCIONA LA FECHA</div></div>',
         unsafe_allow_html=True
     )
 
