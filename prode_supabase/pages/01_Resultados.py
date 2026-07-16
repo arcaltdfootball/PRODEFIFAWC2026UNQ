@@ -124,11 +124,7 @@ st.markdown(
     }
     .escudo-img {
         width: 110px; height: 110px; object-fit: contain;
-        border-radius: 20px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-        background: rgba(255,255,255,0.07);
-        border: 2px solid rgba(255,255,255,0.13);
-        padding: 8px;
+        filter: drop-shadow(0 8px 16px rgba(0,0,0,0.55));
         transition: transform 0.2s;
     }
     .team-name {
@@ -264,9 +260,9 @@ except Exception as e:
 get_escudo = url_escudo
 
 
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=30)
 def cargar_partidos():
-    return sb.table("partidos").select("*").execute().data
+    return conectar().table("partidos").select("*").execute().data
 
 
 try:
@@ -347,44 +343,50 @@ def dot_size(dist):
     if dist == 3: return 10
     return 8
 
-def dot_class(dist):
-    if dist == 0: return "fdot active"
-    if dist == 1: return "fdot near"
-    if dist == 2: return "fdot medium"
-    return "fdot"
+def dot_color(dist):
+    if dist == 0: return "#e8c96b"
+    if dist == 1: return "rgba(232,201,107,0.5)"
+    if dist == 2: return "rgba(232,201,107,0.28)"
+    return "rgba(255,255,255,0.15)"
 
-
-fecha_dots_html = '<div class="fecha-dots-row">'
-for i, f in enumerate(fechas_disponibles):
-    dist = abs(i - fecha_idx)
-    sz   = dot_size(dist)
-    cls  = dot_class(dist)
-    fecha_dots_html += (
-        f'<button class="{cls}" '
-        f'style="width:{sz}px;height:{sz}px;" '
-        f'title="Fecha {f}"></button>'
-    )
-fecha_dots_html += '</div>'
 
 st.markdown(
     f'<div class="fecha-slider-wrap">'
-    f'<div class="fecha-slider-label">FECHA {fecha_sel}</div>'
-    f'{fecha_dots_html}'
-    f'</div>',
+    f'<div class="fecha-slider-label">FECHA {fecha_sel}</div>',
     unsafe_allow_html=True
 )
 
-if total_fechas > 1:
-    with st.expander("📅 Ir a fecha...", expanded=False):
-        cols_f = st.columns(min(total_fechas, 8))
-        for i, f in enumerate(fechas_disponibles):
-            with cols_f[i % 8]:
-                if st.button(f"F{f}", key=f"fdate_{zona_sel}_{f}",
-                             type="primary" if f == fecha_sel else "secondary",
-                             use_container_width=True):
-                    st.session_state[key_fecha] = f
-                    st.session_state[f"idx_{zona_sel}_{f}"] = 0
-                    st.rerun()
+with st.container(key="fecha_dots_container"):
+    fecha_cols = st.columns(total_fechas)
+    for i, f in enumerate(fechas_disponibles):
+        with fecha_cols[i]:
+            if st.button("●", key=f"fdot_{zona_sel}_{f}", help=f"Fecha {f}"):
+                st.session_state[key_fecha] = f
+                st.session_state[f"idx_{zona_sel}_{f}"] = 0
+                st.rerun()
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown(
+    f"""
+    <style>
+    .st-key-fecha_dots_container div[data-testid="stHorizontalBlock"] {{
+        gap: 4px !important; align-items: center !important;
+        flex-wrap: wrap !important; justify-content: center !important;
+    }}
+    {"".join([
+        f'.st-key-fecha_dots_container div[data-testid="column"]:nth-child({i+1}) button '
+        f'{{ width:{dot_size(abs(i - fecha_idx))}px !important; height:{dot_size(abs(i - fecha_idx))}px !important; '
+        f'min-height:0 !important; border-radius:50% !important; padding:0 !important; '
+        f'background:{dot_color(abs(i - fecha_idx))} !important; color:transparent !important; '
+        f'border:none !important; box-shadow:{"0 0 12px rgba(232,201,107,0.6)" if i == fecha_idx else "none"} !important; }}'
+        for i in range(total_fechas)
+    ])}
+    .st-key-fecha_dots_container button p {{ visibility: hidden; }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
 
@@ -402,6 +404,71 @@ idx = st.session_state[key_idx]
 if idx >= total:
     idx = 0
     st.session_state[key_idx] = 0
+
+# ── Navegación de partidos (arriba de la card de escudos) ────────────────
+st.markdown(
+    '<div class="nav-wrapper">'
+    '<div class="nav-label">👉 Elegí un partido de esta fecha (hay '
+    f'{total})</div>'
+    '<div class="match-dots-row" id="match-dots-row">',
+    unsafe_allow_html=True
+)
+
+with st.container(key="partido_dots_container"):
+    dot_cols = st.columns(total)
+    for i in range(total):
+        with dot_cols[i]:
+            is_active = (i == idx)
+            if st.button(
+                "●" if is_active else "○",
+                key=f"mdot_{zona_sel}_{fecha_sel}_{i}",
+                help=f"Partido {i+1}: {lista_partidos[i]['equipo_local']} vs {lista_partidos[i]['equipo_visitante']}"
+            ):
+                st.session_state[key_idx] = i
+                st.rerun()
+
+st.markdown("</div></div>", unsafe_allow_html=True)
+
+st.markdown(
+    f"""
+    <style>
+    .st-key-partido_dots_container div[data-testid="stHorizontalBlock"] {{
+        gap: 6px !important; align-items: center !important;
+        flex-wrap: wrap !important; justify-content: center !important;
+    }}
+    {"".join([
+        f'.st-key-partido_dots_container div[data-testid="column"]:nth-child({i+1}) button '
+        f'{{ width:14px !important; height:14px !important; min-height:0 !important; '
+        f'border-radius:50% !important; padding:0 !important; '
+        f'background:{"#e8c96b" if i==idx else "rgba(255,255,255,0.18)"} !important; '
+        f'color:transparent !important; border:none !important; '
+        f'box-shadow:{"0 0 12px rgba(232,201,107,0.6)" if i==idx else "none"} !important; '
+        f'transform:{"scale(1.4)" if i==idx else "scale(1)"} !important; }}'
+        for i in range(total)
+    ])}
+    .st-key-partido_dots_container button p {{ visibility: hidden; }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    f'<p class="nav-counter">Partido {idx + 1} de {total} &middot; Fecha {fecha_sel}</p>',
+    unsafe_allow_html=True
+)
+
+_, col_prev, _, col_next, _ = st.columns([1, 1, 4, 1, 1])
+with col_prev:
+    if st.button("◀", key="prev_btn", disabled=(idx == 0)):
+        st.session_state[key_idx] = idx - 1
+        st.rerun()
+with col_next:
+    if st.button("▶", key="next_btn", disabled=(idx == total - 1)):
+        st.session_state[key_idx] = idx + 1
+        st.rerun()
+
+# recalcular idx por si cambió con los botones de arriba
+idx = st.session_state[key_idx]
 
 partido   = lista_partidos[idx]
 local     = partido["equipo_local"]
@@ -446,7 +513,7 @@ if partido_jugado:
 else:
     score_center_html = '<span class="score-vs">VS</span>'
     if estado == "confirmado":
-        result_bar_html = '<div class="result-bar pending">Partido Confirmado · No Jugado</div>'
+        result_bar_html = ""
     else:
         result_bar_html = '<div class="result-bar pending">Fecha y Hora a Confirmar</div>'
 
@@ -476,7 +543,8 @@ outer_card = (
     '</div>'
 )
 st.markdown(outer_card, unsafe_allow_html=True)
-st.markdown(result_bar_html, unsafe_allow_html=True)
+if result_bar_html:
+    st.markdown(result_bar_html, unsafe_allow_html=True)
 
 # ── SIGNO 1 / X / 2 visual ───────────────────────────────────────────────
 activo_1 = "activo" if signo_real == "1" else ""
@@ -543,60 +611,3 @@ if jugador_logueado_id:
                 '</div>'
             )
     st.markdown(strip_html, unsafe_allow_html=True)
-
-# ── Navegación de partidos ────────────────────────────────────────────────
-st.markdown(
-    '<div class="nav-wrapper">'
-    '<div class="nav-label">Partidos de la Fecha</div>'
-    '<div class="match-dots-row" id="match-dots-row">',
-    unsafe_allow_html=True
-)
-
-dot_cols = st.columns(total)
-for i in range(total):
-    with dot_cols[i]:
-        is_active  = (i == idx)
-        dot_label  = "●" if is_active else "○"
-        if st.button(
-            dot_label,
-            key=f"mdot_{zona_sel}_{fecha_sel}_{i}",
-            help=f"Partido {i+1}: {lista_partidos[i]['equipo_local']} vs {lista_partidos[i]['equipo_visitante']}"
-        ):
-            st.session_state[key_idx] = i
-            st.rerun()
-
-st.markdown("</div></div>", unsafe_allow_html=True)
-
-st.markdown(
-    f"""
-    <style>
-    {"".join([
-        f'div[data-testid="column"]:nth-child({i+1}) button[kind="secondary"] '
-        f'{{ width:14px !important; height:14px !important; min-height:0 !important; '
-        f'border-radius:50% !important; padding:0 !important; '
-        f'background:{"#e8c96b" if i==idx else "rgba(255,255,255,0.18)"} !important; '
-        f'color:transparent !important; border:none !important; '
-        f'box-shadow:{"0 0 12px rgba(232,201,107,0.6)" if i==idx else "none"} !important; '
-        f'transform:{"scale(1.4)" if i==idx else "scale(1)"} !important; }}'
-        for i in range(total)
-    ])}
-    .stColumns > div button p {{ visibility: hidden; }}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    f'<p class="nav-counter">Partido {idx + 1} de {total} &middot; Fecha {fecha_sel}</p>',
-    unsafe_allow_html=True
-)
-
-_, col_prev, _, col_next, _ = st.columns([1, 1, 4, 1, 1])
-with col_prev:
-    if st.button("◀", key="prev_btn", disabled=(idx == 0)):
-        st.session_state[key_idx] = idx - 1
-        st.rerun()
-with col_next:
-    if st.button("▶", key="next_btn", disabled=(idx == total - 1)):
-        st.session_state[key_idx] = idx + 1
-        st.rerun()
