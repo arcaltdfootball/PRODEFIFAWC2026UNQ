@@ -32,7 +32,7 @@ st.markdown(
     body { font-family: 'DM Sans', sans-serif; color: #f1f5f9; }
 
     [data-testid="stApp"] {
-        background-image: url('https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/main/prode_supabase/FIFA666.jpg');
+        background-image: url('https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/main/prode_supabase/AFA2026.png');
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
