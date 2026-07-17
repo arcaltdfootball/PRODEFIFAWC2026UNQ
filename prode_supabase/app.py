@@ -220,7 +220,7 @@ try:
                 '</div>'
                 '<div class="ganador-premio-box">'
                 f'<div class="ganador-premio">{premio_individual_fmt}</div>'
-                '<div class="ganador-premio-label">OBTIENE</div>'
+                '<div class="ganador-premio-label">le toca</div>'
                 '</div>'
                 '</div>'
                 '</div>'
@@ -261,5 +261,3 @@ try:
 
 except Exception as e:
     st.warning(f"No se pudo cargar el pozo: {e}")
-
-from messiboot import render_messiboot; render_messiboot()
