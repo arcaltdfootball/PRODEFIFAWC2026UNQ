@@ -187,7 +187,7 @@ try:
     from ranking import obtener_ranking
 
     sb = conectar()
-    resp_part = sb.table("participantes").select("id").execute()
+    resp_part = sb.table("jugadores").select("id").execute()
     total_participantes = len(resp_part.data) if resp_part.data else 0
     pozo = total_participantes * 10_000
 
