@@ -14,6 +14,24 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;600;700&display=swap');
 
+    [data-testid="stApp"] {
+        background-image: url('https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/main/prode_supabase/AFA2026.png');
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+        background-repeat: no-repeat;
+        background-color: #0b0f19;
+    }
+    [data-testid="stAppViewContainer"] > div:first-child::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(11,15,25,0.80);
+        z-index: 0;
+        pointer-events: none;
+    }
+    [data-testid="stVerticalBlock"] { position: relative; z-index: 1; }
+
     .zona-titulo {
         font-family: 'Bebas Neue', sans-serif;
         font-size: 2rem;
