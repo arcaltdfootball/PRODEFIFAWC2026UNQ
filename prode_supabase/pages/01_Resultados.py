@@ -17,7 +17,7 @@ st.markdown(
     body { font-family: 'DM Sans', sans-serif; color: #f1f5f9; }
 
     [data-testid="stApp"] {
-        background-image: url('https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/main/prode_supabase/FIFAWorldbakcgound.jpg');
+        background-image: url('https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/main/prode_supabase/AFA2026.png');
         background-size: cover;
         background-position: center;
         background-attachment: fixed;
@@ -318,7 +318,7 @@ def fecha_dot_color(dist):
 with st.container(key="fecha_wrap"):
     st.markdown(
         f'<div class="fecha-slider-label">FECHA {fecha_sel}'
-        f'<div class="fecha-slider-sub">SELECCIONA LA FECHA</div></div>',
+        f'<div class="fecha-slider-sub">estás parado acá</div></div>',
         unsafe_allow_html=True
     )
 
