@@ -22,7 +22,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("PRODE FIFA WORLD CUP 2026")
+st.title("PRODE LIGA PROFESIONAL DE FÚTBOL ARGENTINO 2026")
 
 st.info("Despliegue el menú lateral.")
 
