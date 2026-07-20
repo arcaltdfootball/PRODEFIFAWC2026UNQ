@@ -298,7 +298,7 @@ def renderizar_zona(nombre_zona: str, filas: list):
     # ── Encabezado de zona ───────────────────────────────────────────────
     st.markdown(
         f'<div class="zona-header">'
-        f'<div class="zona-titulo">🏟️ Zona {nombre_zona}</div>'
+        f'<div class="zona-titulo">Zona {nombre_zona}</div>'
         f'<div class="zona-linea"></div>'
         f'</div>',
         unsafe_allow_html=True,
