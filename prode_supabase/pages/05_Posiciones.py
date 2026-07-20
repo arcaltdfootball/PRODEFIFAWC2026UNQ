@@ -9,8 +9,7 @@ from escudos_map import url_escudo
 # ══════════════════════════════════════════════════════════════════════════
 # CONFIG — ajustá estos números según el formato del torneo
 # ══════════════════════════════════════════════════════════════════════════
-CLASIFICAN_TOP = 8      # cuántos puestos (desde el 1°) clasifican a playoffs
-DESCIENDEN_BOTTOM = 2    # cuántos puestos (desde el último) están en descenso/repechaje
+CLASIFICAN_TOP = 8      # cuántos puestos (desde el 1°) clasifican, en CADA zona
 
 
 st.set_page_config(
@@ -98,7 +97,7 @@ st.markdown(
     }
     .hero-rule b { color: #e8c96b; }
 
-    /* ═══════════ ZONA: encabezado + chips de destacados ═══════════ */
+    /* ═══════════ ZONA: encabezado ═══════════ */
     .zona-header {
         display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
         margin: 28px 0 14px;
@@ -117,38 +116,6 @@ st.markdown(
         background: linear-gradient(90deg, rgba(255,215,0,0.35), transparent);
         min-width: 40px;
     }
-
-    .chips-row {
-        display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
-    }
-    .stat-chip {
-        display: flex; align-items: center; gap: 8px;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 14px;
-        padding: 8px 14px;
-        backdrop-filter: blur(16px) saturate(160%);
-        -webkit-backdrop-filter: blur(16px) saturate(160%);
-        font-family: 'Inter', sans-serif;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-    }
-    .stat-chip .chip-icon { font-size: 1.15rem; line-height: 1; }
-    .stat-chip .chip-label {
-        font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em;
-        color: rgba(255,255,255,0.45); display: block;
-    }
-    .stat-chip .chip-value {
-        font-size: 0.88rem; font-weight: 700; color: #fff; display: block;
-        white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
-    }
-    .stat-chip.lider { border-color: rgba(255,215,0,0.4); }
-    .stat-chip.lider .chip-value { color: #FFD700; }
-    .stat-chip.goleador { border-color: rgba(255,107,53,0.4); }
-    .stat-chip.goleador .chip-value { color: #ff9d6b; }
-    .stat-chip.valla { border-color: rgba(57,255,20,0.35); }
-    .stat-chip.valla .chip-value { color: #6bffb0; }
-    .stat-chip.goleada { border-color: rgba(255,23,68,0.4); }
-    .stat-chip.goleada .chip-value { color: #ff6b8b; }
 
     /* ═══════════ TARJETA DE TABLA (glass) ═══════════ */
     .tabla-wrapper {
@@ -233,28 +200,14 @@ st.markdown(
     .col-dg-neg { color: #ff8080; font-weight: 600; }
     .col-dg-neu { color: rgba(255,255,255,0.55); }
 
-    /* ── Badge de posición (medalla / clasifica / descenso) ── */
+    /* ── Badge de posición: solo distingue "clasifica" (top N) ── */
     .pos-badge {
         display: inline-flex; align-items: center; justify-content: center;
         width: 28px; height: 28px; border-radius: 50%;
         font-weight: 700; font-family: 'Bebas Neue', sans-serif; font-size: 1rem;
     }
-    .pos-badge.top1 { background: linear-gradient(135deg,#FFD700,#FFA500); color:#1a1200; box-shadow:0 0 12px rgba(255,215,0,0.65); }
-    .pos-badge.top2 { background: linear-gradient(135deg,#E8E8E8,#B0B0B0); color:#1a1a1a; box-shadow:0 0 9px rgba(200,200,200,0.5); }
-    .pos-badge.top3 { background: linear-gradient(135deg,#CD7F32,#A9642B); color:#fff; box-shadow:0 0 9px rgba(205,127,50,0.5); }
-    .pos-badge.clasifica { background: rgba(74,222,128,0.16); color:#4ade80; border:1px solid rgba(74,222,128,0.4); }
-    .pos-badge.descenso  { background: rgba(248,113,113,0.14); color:#f87171; border:1px solid rgba(248,113,113,0.4); }
+    .pos-badge.clasifica { background: rgba(74,222,128,0.18); color:#4ade80; border:1px solid rgba(74,222,128,0.45); box-shadow: 0 0 10px rgba(74,222,128,0.25); }
     .pos-badge.normal    { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.7); border:1px solid rgba(255,255,255,0.08); }
-
-    /* ── Iconos "neón" alusivos a goles ── */
-    .icono-neon {
-        font-size: 0.95rem;
-        filter: drop-shadow(0 0 3px currentColor);
-        cursor: default;
-    }
-    .icono-fuego  { color: #ff5a1f; text-shadow: 0 0 6px #ff5a1f, 0 0 14px #ff3d00; }
-    .icono-alerta { color: #ff1744; text-shadow: 0 0 6px #ff1744, 0 0 14px #ff1744; }
-    .icono-escudo { color: #39ff14; text-shadow: 0 0 6px #39ff14, 0 0 14px #39ff14; }
 
     /* ── Barra de efectividad ── */
     .ef-wrap { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 78px; }
@@ -270,7 +223,6 @@ st.markdown(
         display: flex; gap: 16px; flex-wrap: wrap; margin: -6px 0 26px;
         font-family: 'Inter', sans-serif; font-size: 0.76rem; color: rgba(255,255,255,0.55);
     }
-    .leyenda span.ico { margin-right: 4px; }
     </style>
     """.replace("__FONDO_AFA2026__", _FONDO_AFA2026),
     unsafe_allow_html=True,
@@ -278,7 +230,7 @@ st.markdown(
 
 st.markdown(
     """
-    <div class='hero-title'>📊 Tabla de Posiciones</div>
+    <div class='hero-title'>Tabla de Posiciones</div>
     <div class='hero-sub'>Liga Profesional Argentina · Clausura 2026</div>
     <div class='hero-rule'>Zona A y Zona B · los partidos <b>interzonales</b> suman
     dentro de la zona propia de cada equipo.</div>
@@ -294,18 +246,7 @@ except Exception as e:
 
 
 def _pos_badge_html(pos: int, total: int) -> str:
-    if pos == 1:
-        cls = "top1"
-    elif pos == 2:
-        cls = "top2"
-    elif pos == 3:
-        cls = "top3"
-    elif pos <= CLASIFICAN_TOP:
-        cls = "clasifica"
-    elif pos > total - DESCIENDEN_BOTTOM:
-        cls = "descenso"
-    else:
-        cls = "normal"
+    cls = "clasifica" if pos <= CLASIFICAN_TOP else "normal"
     return f'<span class="pos-badge {cls}">{pos}</span>'
 
 
@@ -347,31 +288,12 @@ def _efectividad_html(pts, pj) -> str:
     )
 
 
-def _stat_chip(icon, label, value, css_class):
-    return (
-        f'<div class="stat-chip {css_class}">'
-        f'<span class="chip-icon">{icon}</span>'
-        f'<div><span class="chip-label">{label}</span>'
-        f'<span class="chip-value">{value}</span></div>'
-        "</div>"
-    )
-
-
 def renderizar_zona(nombre_zona: str, filas: list):
     if not filas:
         st.info(f"Todavía no hay datos para la Zona {nombre_zona}.")
         return
 
     total = len(filas)
-
-    # ── Destacados de la zona ────────────────────────────────────────────
-    lider           = filas[0]
-    max_gf          = max(f["gf"] for f in filas)
-    max_gc          = max(f["gc"] for f in filas)
-    min_gc          = min(f["gc"] for f in filas)
-    equipo_goleador = next(f for f in filas if f["gf"] == max_gf)
-    equipo_valla    = next(f for f in filas if f["gc"] == min_gc)
-    equipo_goleada  = next(f for f in filas if f["gc"] == max_gc)
 
     # ── Encabezado de zona ───────────────────────────────────────────────
     st.markdown(
@@ -382,35 +304,17 @@ def renderizar_zona(nombre_zona: str, filas: list):
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        '<div class="chips-row">'
-        + _stat_chip("👑", "Líder", lider["nombre"], "lider")
-        + _stat_chip("🔥", "Máximo goleador", f'{equipo_goleador["nombre"]} · {max_gf} GF', "goleador")
-        + _stat_chip("🛡️", "Valla menos vencida", f'{equipo_valla["nombre"]} · {min_gc} GC', "valla")
-        + _stat_chip("⚠️", "Arco más goleado", f'{equipo_goleada["nombre"]} · {max_gc} GC', "goleada")
-        + "</div>",
-        unsafe_allow_html=True,
-    )
-
     # ── Filas de la tabla ────────────────────────────────────────────────
     filas_html = []
     for f in filas:
         escudo = url_escudo(f["nombre"])
         img_html = f'<img src="{escudo}" class="escudo-mini">' if escudo else ""
 
-        iconos = ""
-        if f["gf"] == max_gf:
-            iconos += '<span class="icono-neon icono-fuego" title="Máximo goleador de la zona">🔥</span>'
-        if f["gc"] == max_gc:
-            iconos += '<span class="icono-neon icono-alerta" title="Arco más goleado de la zona">⚠️</span>'
-        if f["gc"] == min_gc:
-            iconos += '<span class="icono-neon icono-escudo" title="Valla menos vencida de la zona">🛡️</span>'
-
         filas_html.append(
             "<tr>"
             f'<td>{_pos_badge_html(f["pos"], total)}</td>'
             f'<td class="col-equipo">{img_html}'
-            f'<span class="nombre-equipo-txt">{f["nombre"]}</span>{iconos}</td>'
+            f'<span class="nombre-equipo-txt">{f["nombre"]}</span></td>'
             f'<td>{f["pj"]}</td>'
             f'<td>{f["pg"]}</td>'
             f'<td>{f["pe"]}</td>'
@@ -444,12 +348,7 @@ renderizar_zona("B", tablas["B"])
 st.markdown(
     f"""
     <div class="leyenda">
-        <span><span class="ico">🥇🥈🥉</span>Podio de la zona</span>
-        <span><span class="ico">🟢</span>Clasifica a playoffs (top {CLASIFICAN_TOP})</span>
-        <span><span class="ico">🔴</span>Zona de descenso/repechaje (últimos {DESCIENDEN_BOTTOM})</span>
-        <span><span class="ico icono-fuego">🔥</span>Máximo goleador de la zona</span>
-        <span><span class="ico icono-escudo">🛡️</span>Valla menos vencida</span>
-        <span><span class="ico icono-alerta">⚠️</span>Arco más goleado</span>
+        <span>🟢 Clasifican los primeros {CLASIFICAN_TOP} de cada zona.</span>
     </div>
     """,
     unsafe_allow_html=True,
@@ -457,5 +356,5 @@ st.markdown(
 st.caption(
     "La Efectividad muestra el rendimiento sobre los puntos posibles "
     "(puntos obtenidos / puntos en juego × 100). Ajustá `CLASIFICAN_TOP` "
-    "y `DESCIENDEN_BOTTOM` al principio del archivo según el formato del torneo."
+    "al principio del archivo según el formato del torneo."
 )
