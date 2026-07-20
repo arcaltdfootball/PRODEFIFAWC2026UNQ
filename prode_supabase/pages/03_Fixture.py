@@ -3,20 +3,8 @@
 Cambios:
   - Boleta usa marcador exacto (goles local / goles visitante); el signo
     (1/X/2) se deriva automáticamente a partir del marcador cargado.
-  - NUEVO: doble modalidad por partido, controlada por la columna
-    `modalidad` de la tabla `partidos`:
-      * "exacto" (default): el jugador carga el marcador exacto y el
-        signo se deriva solo. Puntaje: 1 pt por signo, 3 pts en total
-        por marcador exacto.
-      * "signo": el jugador solo elige 1 / X / 2 (no carga marcador).
-        Puntaje: 1 pt si acierta el signo, 0 si no. Sin bonus de
-        marcador exacto en esta modalidad.
-    El admin elige la modalidad de cada partido desde la pestaña
-    "Cargar Resultados". El resultado real del partido (goles) se
-    sigue cargando siempre como marcador, sin importar la modalidad,
-    para poder derivar el signo real y calcular los puntos.
   - Sistema de puntaje: 1 punto por acertar el signo (Local/Empate/Visitante),
-    3 puntos en total si se acierta el marcador exacto (solo modalidad "exacto").
+    3 puntos en total si se acierta el marcador exacto.
   - Admin puede eliminar participantes con confirmación
   - Admin puede resetear (borrar) la lista completa de participantes
   - Resultado se guarda como goles y se refleja en 01_Resultados.py
@@ -27,14 +15,6 @@ además de las existentes `signo_pred` y `puntos`. Si no existen, correr:
 
     ALTER TABLE pronosticos ADD COLUMN goles_local_pred integer;
     ALTER TABLE pronosticos ADD COLUMN goles_visitante_pred integer;
-
-IMPORTANTE (nuevo): la tabla `partidos` necesita la columna `modalidad`
-(text, nullable, valores "exacto" o "signo"). Si no existe, correr:
-
-    ALTER TABLE partidos ADD COLUMN modalidad text DEFAULT 'exacto';
-
-Los partidos sin este campo (NULL) se tratan como modalidad "exacto"
-para no romper fixtures ya cargados.
 """
 import base64
 import hashlib
@@ -170,21 +150,6 @@ def _badge_signo(signo):
     if signo == "2":
         return '<span class="badge-2">2 · VISIT.</span>'
     return '<span class="badge-sin">Sin pronóstico</span>'
-
-
-def _modalidad(p):
-    """Modalidad de apuesta del partido: 'exacto' o 'signo'.
-    Si el partido no tiene el campo cargado (fixtures viejos), se
-    asume 'exacto' para no romper compatibilidad."""
-    m = (p.get("modalidad") or "exacto").strip().lower()
-    return m if m in ("exacto", "signo") else "exacto"
-
-
-def _badge_modalidad(modalidad):
-    """Badge que indica cómo se apuesta ese partido."""
-    if modalidad == "signo":
-        return '<span class="badge-x">🎯 Modalidad: 1X2 (Local/Empate/Visitante)</span>'
-    return '<span class="badge-ok">🎯 Modalidad: Resultado exacto</span>'
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -442,67 +407,6 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
             st.exception(e)
             return False
 
-    def guardar_pronostico_signo(partido_id, signo_pred):
-        """
-        Guarda el pronóstico en modalidad 1X2 (sin marcador exacto).
-        Sistema de puntaje:
-          - 1 punto si acierta el signo (Local / Empate / Visitante)
-          - 0 puntos si no acierta
-        No aplica el bonus de marcador exacto: en esta modalidad el
-        jugador nunca carga goles, solo el signo.
-        """
-        try:
-            partido_data = next((p for p in partidos_db if p["id"] == partido_id), {})
-            gl_real = partido_data.get("goles_local")
-            gv_real = partido_data.get("goles_visitante")
-            signo_real = _calcular_signo(gl_real, gv_real)
-
-            if signo_real is None:
-                pts = None  # partido todavía no jugado
-            elif signo_pred == signo_real:
-                pts = 1
-            else:
-                pts = 0
-
-            existente = pron.get(partido_id)
-            payload = {
-                "signo_pred": signo_pred,
-                "goles_local_pred": None,
-                "goles_visitante_pred": None,
-            }
-            if pts is not None:
-                payload["puntos"] = pts
-
-            if existente:
-                resp = sb.table("pronosticos").update(payload).eq("id", existente["id"]).execute()
-                if not (resp.data or []):
-                    st.error(
-                        "⚠️ No se guardó (0 filas afectadas). Probablemente RLS está "
-                        "bloqueando el UPDATE en 'pronosticos' para la key usada."
-                    )
-                    return False
-            else:
-                resp = sb.table("pronosticos").insert({
-                    "jugador_id": jugador_objetivo_id,
-                    "partido_id": partido_id,
-                    **payload,
-                }).execute()
-                if not (resp.data or []):
-                    st.error(
-                        "⚠️ No se guardó (0 filas insertadas). Probablemente RLS está "
-                        "bloqueando el INSERT en 'pronosticos' para la key usada."
-                    )
-                    return False
-            st.toast(
-                f"Pronóstico guardado: {_signo_a_texto(signo_pred)}",
-                icon="✅",
-            )
-            return True
-        except Exception as e:
-            st.error(f"No se pudo guardar: {e}")
-            st.exception(e)
-            return False
-
     tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden])
     for tab, zona in zip(tabs, zonas_orden):
         with tab:
@@ -540,12 +444,6 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         meta_str = " · ".join(meta_parts) if meta_parts else "Fecha a confirmar"
                         st.markdown(f'<div class="fila-meta">{meta_str}</div>', unsafe_allow_html=True)
 
-                        modalidad_p = _modalidad(p)
-                        st.markdown(
-                            f'<div style="text-align:center;margin-bottom:6px;">{_badge_modalidad(modalidad_p)}</div>',
-                            unsafe_allow_html=True,
-                        )
-
                         prev = pron.get(p["id"])
                         signo_prev = prev["signo_pred"] if prev else None
 
@@ -578,42 +476,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         gl_pred_prev = prev.get("goles_local_pred") if prev else None
                         gv_pred_prev = prev.get("goles_visitante_pred") if prev else None
 
-                        if editable and not ya_jugado and modalidad_p == "signo":
-                            # ── Modalidad 1X2: solo elegir Local / Empate / Visitante ──
-                            opciones_1x2 = ["1", "X", "2"]
-                            etiquetas_1x2 = {
-                                "1": f"1 · {local}",
-                                "X": "X · Empate",
-                                "2": f"2 · {visitante}",
-                            }
-                            idx_prev = opciones_1x2.index(signo_prev) if signo_prev in opciones_1x2 else 0
-
-                            col_sel, col_btn, col_estado = st.columns([5, 1.4, 2])
-                            with col_sel:
-                                signo_sel = st.radio(
-                                    "Elegí 1 / X / 2",
-                                    opciones_1x2,
-                                    index=idx_prev,
-                                    horizontal=True,
-                                    format_func=lambda s: etiquetas_1x2[s],
-                                    key=f"signo_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                    label_visibility="collapsed",
-                                )
-                            with col_btn:
-                                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-                                if st.button(
-                                    "💾 Guardar",
-                                    key=f"guardar_signo_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    if guardar_pronostico_signo(p["id"], signo_sel):
-                                        st.rerun()
-                            with col_estado:
-                                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-                                st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
-
-                        elif editable and not ya_jugado:
-                            # ── Modalidad exacto: cargar marcador; el signo se deriva solo ──
+                        if editable and not ya_jugado:
                             col_gl, col_gv, col_btn, col_estado = st.columns([1, 1, 1.4, 2])
                             with col_gl:
                                 gl_new_pred = st.number_input(
@@ -735,29 +598,6 @@ with tab_resultados:
                             )
                         else:
                             st.markdown(f"**{local}** vs **{visitante}** — *Sin resultado*")
-
-                        modalidad_actual = _modalidad(p)
-
-                        def _cambiar_modalidad(partido_id=p["id"], key_sel=f"modo_{p['id']}"):
-                            nueva = st.session_state[key_sel]
-                            valor = "signo" if nueva.startswith("1X2") else "exacto"
-                            try:
-                                sb.table("partidos").update({"modalidad": valor}).eq("id", partido_id).execute()
-                                cargar_partidos.clear()
-                                st.cache_data.clear()
-                                st.toast(f"Modalidad actualizada: {nueva}", icon="🎯")
-                            except Exception as e:
-                                st.error(f"No se pudo actualizar la modalidad: {e}")
-
-                        st.selectbox(
-                            "Modalidad de apuesta",
-                            ["Resultado exacto", "1X2 (Local/Empate/Visitante)"],
-                            index=0 if modalidad_actual == "exacto" else 1,
-                            key=f"modo_{p['id']}",
-                            on_change=_cambiar_modalidad,
-                            help="Define cómo pueden pronosticar los jugadores este partido. "
-                                 "El resultado real siempre se carga como marcador.",
-                        )
 
                         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
                         with c1:
