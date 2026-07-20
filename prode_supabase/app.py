@@ -1,7 +1,7 @@
 import streamlit as st
 
 st.set_page_config(
-    page_title="PRODE FIFA WORLD CUP 2026",
+    page_title="PRODE FÚTBOL ARGENTINO 2026",
     page_icon="icon2026fwc.png",
     layout="wide"
 )
