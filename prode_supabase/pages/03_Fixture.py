@@ -86,25 +86,62 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600&display=swap');
 
-    [data-testid="stApp"] {
-        background-image: url('__FONDO_AFA2026__');
-        background-size: cover;
-        background-position: center;
-        background-attachment: fixed;
-        background-repeat: no-repeat;
+    [data-testid="stAppViewContainer"] {
+        background-image:
+            linear-gradient(160deg, rgba(9,12,22,0.87) 0%, rgba(13,17,32,0.84) 45%, rgba(7,9,16,0.90) 100%),
+            url('__FONDO_AFA2026__');
+        background-size: cover, cover;
+        background-position: center, center;
+        background-repeat: no-repeat, no-repeat;
+        background-attachment: fixed, fixed;
         background-color: #0b0f19;
     }
-    [data-testid="stAppViewContainer"] > div:first-child::before {
-        content: '';
-        position: fixed;
-        inset: 0;
-        background: rgba(11,15,25,0.80);
-        z-index: 0;
-        pointer-events: none;
-    }
+    [data-testid="stHeader"] { background: transparent !important; }
     [data-testid="stVerticalBlock"] { position: relative; z-index: 1; }
 
     h1, h2, h3 { font-family: 'Bebas Neue', sans-serif !important; letter-spacing: 1px; }
+
+    /* ═══════════ TABS DE ZONA — estilo glass / blur 2026 ═══════════ */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        display: inline-flex;
+        gap: 6px;
+        background: rgba(255,255,255,0.045);
+        border: 1px solid rgba(255,255,255,0.09);
+        border-radius: 999px;
+        padding: 6px;
+        backdrop-filter: blur(22px) saturate(180%);
+        -webkit-backdrop-filter: blur(22px) saturate(180%);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+        margin-bottom: 18px;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"] { display: none !important; }
+    [data-testid="stTabs"] [data-baseweb="tab-border"] { display: none !important; }
+    [data-testid="stTabs"] button[data-baseweb="tab"],
+    [data-testid="stTabs"] [data-testid="stTab"] {
+        font-family: 'Bebas Neue', sans-serif !important;
+        font-size: 1.05rem !important;
+        letter-spacing: 0.06em !important;
+        color: rgba(255,255,255,0.55) !important;
+        background: transparent !important;
+        border: 1px solid transparent !important;
+        border-radius: 999px !important;
+        padding: 9px 24px !important;
+        margin: 0 !important;
+        transition: all .22s ease !important;
+    }
+    [data-testid="stTabs"] button[data-baseweb="tab"]:hover,
+    [data-testid="stTabs"] [data-testid="stTab"]:hover {
+        color: #fff !important;
+        background: rgba(255,255,255,0.07) !important;
+    }
+    [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"],
+    [data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] {
+        color: #e8c96b !important;
+        background: linear-gradient(135deg, rgba(232,201,107,0.28) 0%, rgba(232,201,107,0.08) 100%) !important;
+        border: 1px solid rgba(232,201,107,0.45) !important;
+        box-shadow: 0 4px 18px rgba(232,201,107,0.22), inset 0 1px 0 rgba(255,255,255,0.12) !important;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-panel"] { padding-top: 4px; }
 
     .titulo-pagina {
         font-family: 'Bebas Neue', sans-serif;
