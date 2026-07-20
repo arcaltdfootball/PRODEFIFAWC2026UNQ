@@ -192,8 +192,8 @@ html, body, p, span:not(.material-symbols-rounded):not(.material-icons):not([dat
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style='padding: 18px 0 6px 0;'>
-    <div class='hero-title'>🏆 Ranking General Prode</div>
-    <div class='hero-sub'>Liga Profesional Argentina · Pronóstico Digital</div>
+    <div class='hero-title'>Ranking General</div>
+    <div class='hero-sub'>Liga Profesional Argentina · Pronósticos</div>
     <div class='hero-rule'>Sistema de puntaje: <b>1 punto</b> por acertar el resultado (Local / Empate / Visitante) ·
     <b>3 puntos en total</b> si acertás el resultado exacto.</div>
 </div>
