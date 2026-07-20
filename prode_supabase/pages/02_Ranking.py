@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import base64
 import math
+from pathlib import Path
 from ranking import obtener_ranking
 
 try:
@@ -9,6 +10,36 @@ try:
     TIENE_EXCEL = True
 except ImportError:
     TIENE_EXCEL = False
+
+
+@st.cache_data(show_spinner=False)
+def _fondo_pagina_datauri():
+    """
+    Busca AFA2026.png junto a este script (o en subcarpetas 'assets'/'static'
+    del proyecto) y la devuelve como data URI en base64, para usarla de fondo
+    sin depender de un link externo. Si no la encuentra, devuelve None y se
+    usa una URL de respaldo.
+    """
+    candidatos = [
+        Path(__file__).parent / "AFA2026.png",
+        Path(__file__).parent / "assets" / "AFA2026.png",
+        Path(__file__).parent / "static" / "AFA2026.png",
+        Path(__file__).parent.parent / "AFA2026.png",
+    ]
+    for ruta in candidatos:
+        try:
+            if ruta.is_file():
+                b64 = base64.b64encode(ruta.read_bytes()).decode()
+                return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+    return None
+
+
+_FONDO_AFA2026 = _fondo_pagina_datauri() or (
+    "https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/"
+    "main/prode_supabase/AFA2026.png"
+)
 
 st.set_page_config(
     page_title="Ranking - Liga Profesional Argentina",
@@ -21,8 +52,14 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700&display=swap');
 
 [data-testid="stAppViewContainer"] {
-    background: linear-gradient(160deg,#050b18 0%,#0b1230 45%,#050510 100%);
-    background-attachment: fixed;
+    background-image:
+        linear-gradient(160deg, rgba(5,11,24,0.88) 0%, rgba(11,18,48,0.85) 45%, rgba(5,5,16,0.90) 100%),
+        url('__FONDO_AFA2026__');
+    background-size: cover, cover;
+    background-position: center, center;
+    background-repeat: no-repeat, no-repeat;
+    background-attachment: fixed, fixed;
+    background-color: #050510;
 }
 [data-testid="stHeader"] { background: transparent !important; }
 * { box-sizing: border-box; }
@@ -150,13 +187,13 @@ html, body, p, span:not(.material-symbols-rounded):not(.material-icons):not([dat
     background: transparent !important;
 }
 </style>
-""", unsafe_allow_html=True)
+""".replace("__FONDO_AFA2026__", _FONDO_AFA2026), unsafe_allow_html=True)
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style='padding: 18px 0 6px 0;'>
-    <div class='hero-title'>🏆 Ranking General</div>
-    <div class='hero-sub'>Liga Profesional Argentina · Predicciones</div>
+    <div class='hero-title'>🏆 Ranking General Prode</div>
+    <div class='hero-sub'>Liga Profesional Argentina · Pronóstico Digital</div>
     <div class='hero-rule'>Sistema de puntaje: <b>1 punto</b> por acertar el resultado (Local / Empate / Visitante) ·
     <b>3 puntos en total</b> si acertás el resultado exacto.</div>
 </div>
