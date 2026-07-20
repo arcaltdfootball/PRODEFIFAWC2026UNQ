@@ -22,10 +22,41 @@ import json
 import os
 import secrets
 import string
+from pathlib import Path
 
 import streamlit as st
 from database import conectar
 from escudos_map import url_escudo
+
+
+@st.cache_data(show_spinner=False)
+def _fondo_pagina_datauri():
+    """
+    Busca AFA2026.png junto a este script (o en subcarpetas 'assets'/'static'
+    del proyecto) y la devuelve como data URI en base64, para usarla de fondo
+    sin depender de un link externo. Si no la encuentra, devuelve None y se
+    usa una URL de respaldo.
+    """
+    candidatos = [
+        Path(__file__).parent / "AFA2026.png",
+        Path(__file__).parent / "assets" / "AFA2026.png",
+        Path(__file__).parent / "static" / "AFA2026.png",
+        Path(__file__).parent.parent / "AFA2026.png",
+    ]
+    for ruta in candidatos:
+        try:
+            if ruta.is_file():
+                b64 = base64.b64encode(ruta.read_bytes()).decode()
+                return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+    return None
+
+
+_FONDO_AFA2026 = _fondo_pagina_datauri() or (
+    "https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/"
+    "main/prode_supabase/AFA2026.png"
+)
 
 
 def _rol_de_supabase_key():
@@ -54,6 +85,24 @@ st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600&display=swap');
+
+    [data-testid="stApp"] {
+        background-image: url('__FONDO_AFA2026__');
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+        background-repeat: no-repeat;
+        background-color: #0b0f19;
+    }
+    [data-testid="stAppViewContainer"] > div:first-child::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(11,15,25,0.80);
+        z-index: 0;
+        pointer-events: none;
+    }
+    [data-testid="stVerticalBlock"] { position: relative; z-index: 1; }
 
     h1, h2, h3 { font-family: 'Bebas Neue', sans-serif !important; letter-spacing: 1px; }
 
@@ -91,7 +140,7 @@ st.markdown(
         display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
     }
     </style>
-    """,
+    """.replace("__FONDO_AFA2026__", _FONDO_AFA2026),
     unsafe_allow_html=True,
 )
 
