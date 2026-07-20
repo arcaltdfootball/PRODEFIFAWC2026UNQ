@@ -3,18 +3,29 @@
 Cambios:
   - Boleta usa marcador exacto (goles local / goles visitante); el signo
     (1/X/2) se deriva automáticamente a partir del marcador cargado.
+  - NUEVO: cada partido tiene un "modo de pronóstico" configurable por el
+    admin (por fecha completa o partido a partido):
+        · "exacto" → el jugador carga el marcador exacto (hasta 3 puntos).
+        · "signo"  → el jugador solo elige 1 / X / 2 (hasta 1 punto).
+    Esto permite que algunas fechas se jueguen a resultado exacto y otras
+    solo a signo.
   - Sistema de puntaje: 1 punto por acertar el signo (Local/Empate/Visitante),
-    3 puntos en total si se acierta el marcador exacto.
+    3 puntos en total si se acierta el marcador exacto (solo aplica en
+    partidos con modo "exacto").
   - Admin puede eliminar participantes con confirmación
   - Admin puede resetear (borrar) la lista completa de participantes
   - Resultado se guarda como goles y se refleja en 01_Resultados.py
+  - Boleta rediseñada con cards modernas tipo "sabana" de partidos.
 
 IMPORTANTE: la tabla `pronosticos` en Supabase necesita las columnas
 `goles_local_pred` (int, nullable) y `goles_visitante_pred` (int, nullable)
-además de las existentes `signo_pred` y `puntos`. Si no existen, correr:
+además de las existentes `signo_pred` y `puntos`. La tabla `partidos`
+necesita la columna `modo_pronostico` (text, nullable, default 'exacto').
+Si no existen, correr:
 
     ALTER TABLE pronosticos ADD COLUMN goles_local_pred integer;
     ALTER TABLE pronosticos ADD COLUMN goles_visitante_pred integer;
+    ALTER TABLE partidos ADD COLUMN modo_pronostico text DEFAULT 'exacto';
 """
 import base64
 import hashlib
@@ -103,10 +114,85 @@ st.markdown(
     .badge-pts { background:rgba(232,201,107,0.18);color:#e8c96b;   border-radius:10px; padding:3px 10px; font-size:0.72rem; margin-left:6px; }
     .badge-sin { background:rgba(148,163,184,0.15);color:#94a3b8;   border-radius:10px; padding:3px 10px; font-size:0.72rem; }
     .badge-admin { background:rgba(239,68,68,0.15);color:#f87171;   border-radius:10px; padding:2px 10px; font-size:0.72rem; }
+    .badge-modo-exacto { background:rgba(232,201,107,0.16); color:#e8c96b; border:1px solid rgba(232,201,107,0.35); border-radius:20px; padding:2px 12px; font-size:0.68rem; font-weight:600; font-family:'Inter',sans-serif; letter-spacing:.3px; }
+    .badge-modo-signo  { background:rgba(96,165,250,0.16); color:#60a5fa; border:1px solid rgba(96,165,250,0.35); border-radius:20px; padding:2px 12px; font-size:0.68rem; font-weight:600; font-family:'Inter',sans-serif; letter-spacing:.3px; }
 
     /* Selector 1/X/2 */
     .opcion-1x2 {
         display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    }
+
+    /* ═══════════ CARD MODERNA DE PARTIDO (sabana de boleta) ═══════════ */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: linear-gradient(155deg, rgba(25,31,46,0.92) 0%, rgba(15,20,32,0.94) 100%);
+        border: 1px solid rgba(232,201,107,0.14) !important;
+        border-radius: 18px !important;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
+        transition: border-color .15s ease, box-shadow .15s ease;
+        margin-bottom: 14px;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+        border-color: rgba(232,201,107,0.35) !important;
+        box-shadow: 0 6px 22px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+
+    .card-top-row {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-bottom: 10px; gap: 8px; flex-wrap: wrap;
+    }
+    .card-meta {
+        font-size: 0.72rem; color: #64748b; font-family: 'Inter', sans-serif;
+        display: flex; align-items: center; gap: 6px;
+    }
+    .card-tag-fecha {
+        background: rgba(255,255,255,0.04); color: #94a3b8; border-radius: 8px;
+        padding: 2px 9px; font-size: 0.68rem; font-family: 'Inter', sans-serif;
+        border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .card-equipos {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 10px; margin: 6px 0 14px 0;
+    }
+    .card-equipo {
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+        flex: 1; min-width: 0;
+    }
+    .card-equipo .nombre-equipo {
+        font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.82rem;
+        color: #e5e7eb; text-align: center; line-height: 1.15;
+        overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+        -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+    .card-escudo-grande {
+        width: 52px; height: 52px; object-fit: contain;
+        filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4));
+    }
+    .card-centro {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        min-width: 64px;
+    }
+    .card-vs {
+        font-family: 'Bebas Neue', sans-serif; font-size: 1.05rem; color: #475569;
+        letter-spacing: 1px;
+    }
+    .card-marcador {
+        font-family: 'Bebas Neue', sans-serif; font-size: 1.9rem; color: #e8c96b;
+        letter-spacing: 2px; line-height: 1;
+    }
+    .card-marcador-sub {
+        font-size: 0.62rem; color: #64748b; font-family: 'Inter', sans-serif;
+        margin-top: 2px; text-transform: uppercase; letter-spacing: .5px;
+    }
+
+    .card-footer {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; flex-wrap: wrap; margin-top: 10px;
+    }
+
+    /* Botones tipo "chip" para 1/X/2 */
+    div[data-testid="stButton"] button {
+        border-radius: 12px !important;
     }
     </style>
     """,
@@ -150,6 +236,20 @@ def _badge_signo(signo):
     if signo == "2":
         return '<span class="badge-2">2 · VISIT.</span>'
     return '<span class="badge-sin">Sin pronóstico</span>'
+
+
+def _modo_partido(p):
+    """Devuelve el modo de pronóstico de un partido: 'exacto' o 'signo'.
+    Si la columna no existe todavía en la base (None), por defecto es 'exacto'
+    para no romper partidos ya cargados."""
+    modo = (p.get("modo_pronostico") or "exacto").strip().lower()
+    return modo if modo in ("exacto", "signo") else "exacto"
+
+
+def _badge_modo(modo):
+    if modo == "signo":
+        return '<span class="badge-modo-signo">🔀 Solo 1 / X / 2</span>'
+    return '<span class="badge-modo-exacto">🎯 Resultado exacto</span>'
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -291,7 +391,14 @@ def cargar_partidos():
     return sb.table("partidos").select("*").execute().data
 
 
+@st.cache_data(ttl=20, show_spinner=False)
 def cargar_pronosticos_de(j_id):
+    """
+    Trae SOLO los pronósticos del jugador indicado (filtrado por jugador_id
+    en la propia consulta a Supabase). Nunca trae los de otros participantes.
+    Se cachea por jugador (ttl corto) para no repetir la consulta en cada
+    rerun/click y así hacer la boleta más ágil.
+    """
     res = (
         sb.table("pronosticos")
         .select("id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos")
@@ -401,6 +508,62 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                 f"Pronóstico guardado: {gl_pred}-{gv_pred} ({_signo_a_texto(signo)})",
                 icon="✅",
             )
+            cargar_pronosticos_de.clear()
+            return True
+        except Exception as e:
+            st.error(f"No se pudo guardar: {e}")
+            st.exception(e)
+            return False
+
+    def guardar_pronostico_signo(partido_id, signo_pred):
+        """
+        Guarda el pronóstico de un partido en modo 'solo signo' (1/X/2),
+        sin marcador exacto. Puntaje: 1 punto si acierta el signo, 0 si no.
+        """
+        try:
+            partido_data = next((p for p in partidos_db if p["id"] == partido_id), {})
+            gl_real = partido_data.get("goles_local")
+            gv_real = partido_data.get("goles_visitante")
+            signo_real = _calcular_signo(gl_real, gv_real)
+
+            if signo_real is None:
+                pts = None  # partido todavía no jugado
+            elif signo_pred == signo_real:
+                pts = 1
+            else:
+                pts = 0
+
+            existente = pron.get(partido_id)
+            payload = {
+                "signo_pred": signo_pred,
+                "goles_local_pred": None,
+                "goles_visitante_pred": None,
+            }
+            if pts is not None:
+                payload["puntos"] = pts
+
+            if existente:
+                resp = sb.table("pronosticos").update(payload).eq("id", existente["id"]).execute()
+                if not (resp.data or []):
+                    st.error(
+                        "⚠️ No se guardó (0 filas afectadas). Probablemente RLS está "
+                        "bloqueando el UPDATE en 'pronosticos' para la key usada."
+                    )
+                    return False
+            else:
+                resp = sb.table("pronosticos").insert({
+                    "jugador_id": jugador_objetivo_id,
+                    "partido_id": partido_id,
+                    **payload,
+                }).execute()
+                if not (resp.data or []):
+                    st.error(
+                        "⚠️ No se guardó (0 filas insertadas). Probablemente RLS está "
+                        "bloqueando el INSERT en 'pronosticos' para la key usada."
+                    )
+                    return False
+            st.toast(f"Pronóstico guardado: {_signo_a_texto(signo_pred)}", icon="✅")
+            cargar_pronosticos_de.clear()
             return True
         except Exception as e:
             st.error(f"No se pudo guardar: {e}")
@@ -411,137 +574,201 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
     for tab, zona in zip(tabs, zonas_orden):
         with tab:
             fechas = sorted(por_zona[zona].keys(), key=int)
-            for fecha in fechas:
+
+            # ── Elegir UNA fecha por vez: evita construir los widgets de
+            #    todas las fechas del torneo en cada carga/click, que era lo
+            #    que hacía pesada la página. Por defecto, arranca en la
+            #    primera fecha que todavía tiene partidos sin pronosticar.
+            def _fecha_tiene_pendientes(f):
+                partidos_f = por_zona[zona][f]
+                return any(p["id"] not in pron for p in partidos_f)
+
+            idx_default = 0
+            for i, f in enumerate(fechas):
+                if _fecha_tiene_pendientes(f):
+                    idx_default = i
+                    break
+
+            fecha_sel = st.selectbox(
+                "📅 Elegí la fecha",
+                fechas,
+                index=idx_default,
+                format_func=lambda f: f"Fecha {f}",
+                key=f"fecha_sel_{key_ns}_{jugador_objetivo_id}_{zona}",
+            )
+
+            for fecha in [fecha_sel]:
                 partidos_fecha = sorted(
                     por_zona[zona][fecha],
                     key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
                 )
                 cargados = sum(1 for p in partidos_fecha if p["id"] in pron)
-                with st.expander(f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"):
+                with st.expander(
+                    f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados",
+                    expanded=True,
+                ):
                     for p in partidos_fecha:
                         local     = p["equipo_local"]
                         visitante = p["equipo_visitante"]
                         gl_real   = p.get("goles_local")
                         gv_real   = p.get("goles_visitante")
                         ya_jugado = gl_real is not None and gv_real is not None
+                        modo      = _modo_partido(p)
 
-                        # Calcular signo real del partido
-                        signo_real = None
-                        if ya_jugado:
-                            if gl_real > gv_real:   signo_real = "1"
-                            elif gl_real == gv_real: signo_real = "X"
-                            else:                    signo_real = "2"
+                        signo_real = _calcular_signo(gl_real, gv_real) if ya_jugado else None
 
                         esc_l = url_escudo(local)    or ""
                         esc_v = url_escudo(visitante) or ""
-                        img_l = f'<img src="{esc_l}" class="fila-escudo">' if esc_l else "🛡️"
-                        img_v = f'<img src="{esc_v}" class="fila-escudo">' if esc_v else "🛡️"
+                        img_l = f'<img src="{esc_l}" class="card-escudo-grande">' if esc_l else '<div style="font-size:2rem;">🛡️</div>'
+                        img_v = f'<img src="{esc_v}" class="card-escudo-grande">' if esc_v else '<div style="font-size:2rem;">🛡️</div>'
 
                         meta_parts = []
-                        if p.get("fecha_partido"): meta_parts.append(str(p["fecha_partido"]))
-                        if p.get("hora"):          meta_parts.append(str(p["hora"]))
-                        if p.get("estadio"):       meta_parts.append(str(p["estadio"]))
-                        meta_str = " · ".join(meta_parts) if meta_parts else "Fecha a confirmar"
-                        st.markdown(f'<div class="fila-meta">{meta_str}</div>', unsafe_allow_html=True)
+                        if p.get("fecha_partido"): meta_parts.append(f"📅 {p['fecha_partido']}")
+                        if p.get("hora"):          meta_parts.append(f"🕒 {p['hora']}")
+                        if p.get("estadio"):       meta_parts.append(f"📍 {p['estadio']}")
+                        meta_str = " &nbsp;·&nbsp; ".join(meta_parts) if meta_parts else "Fecha a confirmar"
 
                         prev = pron.get(p["id"])
-                        signo_prev = prev["signo_pred"] if prev else None
-
-                        col_local, col_vs, col_visit = st.columns([4, 3, 4])
-                        with col_local:
-                            st.markdown(
-                                f'<div class="fila-equipo">{img_l}<span>{local}</span></div>',
-                                unsafe_allow_html=True,
-                            )
-                        with col_vs:
-                            if ya_jugado:
-                                st.markdown(
-                                    f'<div style="text-align:center;font-family:\'Bebas Neue\',sans-serif;'
-                                    f'font-size:1.6rem;color:#e8c96b;">{gl_real} - {gv_real}</div>',
-                                    unsafe_allow_html=True,
-                                )
-                            else:
-                                st.markdown(
-                                    '<div style="text-align:center;font-family:\'Bebas Neue\',sans-serif;'
-                                    'font-size:1.2rem;color:#475569;">VS</div>',
-                                    unsafe_allow_html=True,
-                                )
-                        with col_visit:
-                            st.markdown(
-                                f'<div class="fila-equipo derecha"><span>{visitante}</span>{img_v}</div>',
-                                unsafe_allow_html=True,
-                            )
-
-                        # ── Predicción de marcador exacto ────────────────────
+                        signo_prev   = prev["signo_pred"] if prev else None
                         gl_pred_prev = prev.get("goles_local_pred") if prev else None
                         gv_pred_prev = prev.get("goles_visitante_pred") if prev else None
 
-                        if editable and not ya_jugado:
-                            col_gl, col_gv, col_btn, col_estado = st.columns([1, 1, 1.4, 2])
-                            with col_gl:
-                                gl_new_pred = st.number_input(
-                                    f"Goles {local}", min_value=0, max_value=15,
-                                    value=gl_pred_prev if gl_pred_prev is not None else 0,
-                                    key=f"gl_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                )
-                            with col_gv:
-                                gv_new_pred = st.number_input(
-                                    f"Goles {visitante}", min_value=0, max_value=15,
-                                    value=gv_pred_prev if gv_pred_prev is not None else 0,
-                                    key=f"gv_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                )
-                            with col_btn:
-                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                                if st.button(
-                                    "💾 Guardar pronóstico",
-                                    key=f"guardar_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    if guardar_pronostico(p["id"], int(gl_new_pred), int(gv_new_pred)):
-                                        st.rerun()
-                            with col_estado:
-                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                                st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
+                        with st.container(border=True):
+                            # ── Encabezado de la card: meta + modo ──────────
+                            st.markdown(
+                                f'<div class="card-top-row">'
+                                f'<span class="card-meta">{meta_str}</span>'
+                                f'<span>{_badge_modo(modo)}</span>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
 
-                        else:
-                            # Solo lectura o partido ya jugado
-                            col_pron, col_pts = st.columns([3, 2])
-                            with col_pron:
-                                if gl_pred_prev is not None and gv_pred_prev is not None:
+                            # ── Equipos + marcador/VS ────────────────────────
+                            if ya_jugado:
+                                centro_html = (
+                                    f'<div class="card-marcador">{gl_real} - {gv_real}</div>'
+                                    f'<div class="card-marcador-sub">Final</div>'
+                                )
+                            else:
+                                centro_html = '<div class="card-vs">VS</div>'
+
+                            st.markdown(
+                                f'<div class="card-equipos">'
+                                f'<div class="card-equipo">{img_l}<span class="nombre-equipo">{local}</span></div>'
+                                f'<div class="card-centro">{centro_html}</div>'
+                                f'<div class="card-equipo">{img_v}<span class="nombre-equipo">{visitante}</span></div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
+                            # ── Zona de pronóstico ───────────────────────────
+                            if editable and not ya_jugado:
+                                if modo == "signo":
+                                    # Selector 1 / X / 2 tipo chips, guardado inmediato
+                                    col_b1, col_bx, col_b2 = st.columns(3)
+                                    seleccionado = None
+                                    with col_b1:
+                                        if st.button(
+                                            f"🏠 {local}\n1",
+                                            key=f"s1_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                            use_container_width=True,
+                                            type="primary" if signo_prev == "1" else "secondary",
+                                        ):
+                                            seleccionado = "1"
+                                    with col_bx:
+                                        if st.button(
+                                            "🤝 Empate\nX",
+                                            key=f"sx_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                            use_container_width=True,
+                                            type="primary" if signo_prev == "X" else "secondary",
+                                        ):
+                                            seleccionado = "X"
+                                    with col_b2:
+                                        if st.button(
+                                            f"✈️ {visitante}\n2",
+                                            key=f"s2_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                            use_container_width=True,
+                                            type="primary" if signo_prev == "2" else "secondary",
+                                        ):
+                                            seleccionado = "2"
+
+                                    if seleccionado is not None:
+                                        if guardar_pronostico_signo(p["id"], seleccionado):
+                                            st.rerun()
+
                                     st.markdown(
-                                        f'<span class="badge-sin">Tu pronóstico: {gl_pred_prev} - {gv_pred_prev}</span> '
-                                        + _badge_signo(signo_prev),
+                                        f'<div class="card-footer">{_badge_signo(signo_prev)}</div>',
                                         unsafe_allow_html=True,
                                     )
                                 else:
-                                    st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
-                            with col_pts:
-                                if ya_jugado and signo_prev:
-                                    pts = prev.get("puntos") if prev else None
-                                    if pts == 3:
-                                        st.markdown(
-                                            '<span class="badge-ok">✅ Resultado exacto</span>'
-                                            '<span class="badge-pts">+3 pts</span>',
-                                            unsafe_allow_html=True,
+                                    # Marcador exacto
+                                    col_gl, col_gv, col_btn = st.columns([1, 1, 1.6])
+                                    with col_gl:
+                                        gl_new_pred = st.number_input(
+                                            f"Goles {local}", min_value=0, max_value=15,
+                                            value=gl_pred_prev if gl_pred_prev is not None else 0,
+                                            key=f"gl_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         )
-                                    elif pts and pts >= 1:
-                                        st.markdown(
-                                            '<span class="badge-ok">✅ Acertaste el signo</span>'
-                                            '<span class="badge-pts">+1 pt</span>',
-                                            unsafe_allow_html=True,
+                                    with col_gv:
+                                        gv_new_pred = st.number_input(
+                                            f"Goles {visitante}", min_value=0, max_value=15,
+                                            value=gv_pred_prev if gv_pred_prev is not None else 0,
+                                            key=f"gv_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         )
-                                    else:
-                                        st.markdown(
-                                            f'<span class="badge-sin">❌ No acertaste · Resultado: {_badge_signo(signo_real)}</span>',
-                                            unsafe_allow_html=True,
-                                        )
-                                elif ya_jugado and not signo_prev:
+                                    with col_btn:
+                                        st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                        if st.button(
+                                            "💾 Guardar pronóstico",
+                                            key=f"guardar_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                            use_container_width=True,
+                                            type="primary",
+                                        ):
+                                            if guardar_pronostico(p["id"], int(gl_new_pred), int(gv_new_pred)):
+                                                st.rerun()
+
                                     st.markdown(
-                                        f'<span class="badge-sin">Sin pronóstico · Fue: {_badge_signo(signo_real)}</span>',
+                                        f'<div class="card-footer">{_badge_signo(signo_prev)}</div>',
                                         unsafe_allow_html=True,
                                     )
 
-                        st.markdown("<hr style='opacity:0.08;margin:8px 0;'>", unsafe_allow_html=True)
+                            else:
+                                # Solo lectura o partido ya jugado
+                                if gl_pred_prev is not None and gv_pred_prev is not None:
+                                    pron_html = (
+                                        f'<span class="badge-sin">Tu pronóstico: {gl_pred_prev} - {gv_pred_prev}</span> '
+                                        + _badge_signo(signo_prev)
+                                    )
+                                else:
+                                    pron_html = _badge_signo(signo_prev)
+
+                                resultado_html = ""
+                                if ya_jugado and signo_prev:
+                                    pts = prev.get("puntos") if prev else None
+                                    if pts == 3:
+                                        resultado_html = (
+                                            '<span class="badge-ok">✅ Resultado exacto</span>'
+                                            '<span class="badge-pts">+3 pts</span>'
+                                        )
+                                    elif pts and pts >= 1:
+                                        resultado_html = (
+                                            '<span class="badge-ok">✅ Acertaste el signo</span>'
+                                            '<span class="badge-pts">+1 pt</span>'
+                                        )
+                                    else:
+                                        resultado_html = (
+                                            f'<span class="badge-sin">❌ No acertaste · '
+                                            f'Resultado: {_badge_signo(signo_real)}</span>'
+                                        )
+                                elif ya_jugado and not signo_prev:
+                                    resultado_html = (
+                                        f'<span class="badge-sin">Sin pronóstico · '
+                                        f'Fue: {_badge_signo(signo_real)}</span>'
+                                    )
+
+                                st.markdown(
+                                    f'<div class="card-footer">{pron_html}{resultado_html}</div>',
+                                    unsafe_allow_html=True,
+                                )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -582,6 +809,49 @@ with tab_resultados:
                     key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
                 )
                 with st.expander(f"Fecha {fecha}"):
+                    # ── Modo de pronóstico de la fecha completa ─────────────
+                    modos_fecha = [_modo_partido(p) for p in partidos_fecha]
+                    modo_predominante = max(set(modos_fecha), key=modos_fecha.count)
+                    st.markdown(
+                        f"**Modo de pronóstico de esta fecha:** {_badge_modo(modo_predominante)}",
+                        unsafe_allow_html=True,
+                    )
+                    col_modo, col_aplicar = st.columns([2, 1])
+                    with col_modo:
+                        modo_elegido = st.radio(
+                            "Elegí el modo para TODOS los partidos de esta fecha",
+                            options=["exacto", "signo"],
+                            format_func=lambda m: "🎯 Resultado exacto (hasta 3 pts)" if m == "exacto"
+                                                   else "🔀 Solo 1 / X / 2 (hasta 1 pt)",
+                            index=0 if modo_predominante == "exacto" else 1,
+                            horizontal=True,
+                            key=f"modo_fecha_{zona}_{fecha}",
+                        )
+                    with col_aplicar:
+                        st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                        if st.button(
+                            "✅ Aplicar a toda la fecha",
+                            key=f"aplicar_modo_{zona}_{fecha}",
+                            use_container_width=True,
+                        ):
+                            try:
+                                ids_fecha = [p["id"] for p in partidos_fecha]
+                                sb.table("partidos").update(
+                                    {"modo_pronostico": modo_elegido}
+                                ).in_("id", ids_fecha).execute()
+                                cargar_partidos.clear()
+                                st.cache_data.clear()
+                                st.toast(
+                                    f"Fecha {fecha} configurada como "
+                                    f"'{'Resultado exacto' if modo_elegido == 'exacto' else 'Solo 1/X/2'}'.",
+                                    icon="✅",
+                                )
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"No se pudo actualizar el modo de la fecha: {e}")
+                                st.exception(e)
+                    st.markdown("<hr style='opacity:0.08;'>", unsafe_allow_html=True)
+
                     for p in partidos_fecha:
                         local, visitante = p["equipo_local"], p["equipo_visitante"]
                         gl_act = p.get("goles_local")
@@ -594,10 +864,16 @@ with tab_resultados:
                             else:                  signo_actual = "2 · VISITANTE"
                             st.markdown(
                                 f"**{local}** vs **{visitante}** — "
-                                f"Resultado: `{gl_act}-{gv_act}` → **{signo_actual}**"
+                                f"Resultado: `{gl_act}-{gv_act}` → **{signo_actual}** "
+                                f"&nbsp; {_badge_modo(_modo_partido(p))}",
+                                unsafe_allow_html=True,
                             )
                         else:
-                            st.markdown(f"**{local}** vs **{visitante}** — *Sin resultado*")
+                            st.markdown(
+                                f"**{local}** vs **{visitante}** — *Sin resultado* "
+                                f"&nbsp; {_badge_modo(_modo_partido(p))}",
+                                unsafe_allow_html=True,
+                            )
 
                         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
                         with c1:
