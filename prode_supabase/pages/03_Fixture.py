@@ -605,28 +605,38 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
 
     def resetear_pronostico(partido_id):
         """
-        Borra el pronóstico cargado para ese partido (deja los campos en
-        None), para que el jugador pueda volver a cargarlo desde cero.
-        Solo tiene sentido para partidos que todavía no se jugaron.
+        Borra el pronóstico cargado para ese partido, para que el jugador
+        pueda volver a cargarlo desde cero. Solo tiene sentido para partidos
+        que todavía no se jugaron.
+
+        Se borra la fila entera (en vez de poner sus columnas en null) porque
+        `goles_local_pred` / `goles_visitante_pred` tienen restricción NOT
+        NULL en la base.
         """
         try:
             existente = pron.get(partido_id)
             if not existente:
                 return True  # no había nada cargado, no hay nada que resetear
 
-            payload = {
-                "signo_pred": None,
-                "goles_local_pred": None,
-                "goles_visitante_pred": None,
-                "puntos": None,
-            }
-            resp = sb.table("pronosticos").update(payload).eq("id", existente["id"]).execute()
-            if not (resp.data or []):
+            resp = sb.table("pronosticos").delete().eq("id", existente["id"]).execute()
+
+            # Verificación real con SELECT fresco, por si la respuesta de
+            # Supabase viene vacía en .data aunque el DELETE sí se haya
+            # aplicado (mismo gotcha que en el resto del archivo).
+            sigue = (
+                sb.table("pronosticos")
+                .select("id")
+                .eq("id", existente["id"])
+                .execute()
+                .data
+            )
+            if sigue:
                 st.error(
-                    "⚠️ No se reseteó (0 filas afectadas). Probablemente RLS está "
-                    "bloqueando el UPDATE en 'pronosticos' para la key usada."
+                    "⚠️ Se ejecutó el borrado pero el pronóstico sigue en la base. "
+                    "Revisar RLS (policy de DELETE)."
                 )
                 return False
+
             st.toast("Pronóstico reseteado.", icon="🔄")
             return True
         except Exception as e:
