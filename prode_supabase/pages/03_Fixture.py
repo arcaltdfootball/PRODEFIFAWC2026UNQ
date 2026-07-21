@@ -22,6 +22,7 @@ import json
 import os
 import secrets
 import string
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -299,6 +300,38 @@ def _pronostico_cerrado(p) -> bool:
     return ahora >= cierre
 
 
+AUTO_REFRESH_MAX_SEGUNDOS = 20  # tope de espera entre chequeos automáticos
+
+
+def _segundos_hasta_proximo_refresco(partidos):
+    """
+    Calcula cuántos segundos hay que esperar antes de refrescar la página
+    sola, para que apenas se cumpla el horario de cierre de algún partido
+    (fecha/hora confirmada, todavía no jugado, todavía no cerrado) el
+    pronóstico se bloquee sin que el usuario tenga que hacer nada.
+
+    Devuelve None si no hay ningún cierre pendiente (nada que esperar).
+    """
+    ahora = datetime.now(TZ_ARG)
+    proximos_cierres = []
+    for p in partidos:
+        ya_jugado_p = p.get("goles_local") is not None and p.get("goles_visitante") is not None
+        if ya_jugado_p:
+            continue
+        cierre, _error = _momento_cierre(p)
+        if cierre is not None and cierre > ahora:
+            proximos_cierres.append(cierre)
+
+    if not proximos_cierres:
+        return None
+
+    segundos_hasta_cierre = (min(proximos_cierres) - ahora).total_seconds()
+    # Esperamos exactamente hasta el próximo cierre si falta poco; si falta
+    # mucho, esperamos como máximo AUTO_REFRESH_MAX_SEGUNDOS y volvemos a
+    # chequear (así no hace falta un timer exacto por cada partido).
+    return max(1.0, min(segundos_hasta_cierre + 1, AUTO_REFRESH_MAX_SEGUNDOS))
+
+
 def _signo_a_texto(signo):
     """Convierte 1/X/2 a texto descriptivo."""
     return {"1": "Local (1)", "X": "Empate (X)", "2": "Visitante (2)"}.get(signo, signo or "—")
@@ -570,6 +603,37 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
             st.exception(e)
             return False
 
+    def resetear_pronostico(partido_id):
+        """
+        Borra el pronóstico cargado para ese partido (deja los campos en
+        None), para que el jugador pueda volver a cargarlo desde cero.
+        Solo tiene sentido para partidos que todavía no se jugaron.
+        """
+        try:
+            existente = pron.get(partido_id)
+            if not existente:
+                return True  # no había nada cargado, no hay nada que resetear
+
+            payload = {
+                "signo_pred": None,
+                "goles_local_pred": None,
+                "goles_visitante_pred": None,
+                "puntos": None,
+            }
+            resp = sb.table("pronosticos").update(payload).eq("id", existente["id"]).execute()
+            if not (resp.data or []):
+                st.error(
+                    "⚠️ No se reseteó (0 filas afectadas). Probablemente RLS está "
+                    "bloqueando el UPDATE en 'pronosticos' para la key usada."
+                )
+                return False
+            st.toast("Pronóstico reseteado.", icon="🔄")
+            return True
+        except Exception as e:
+            st.error(f"No se pudo resetear: {e}")
+            st.exception(e)
+            return False
+
     tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden])
     for tab, zona in zip(tabs, zonas_orden):
         with tab:
@@ -642,7 +706,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         cerrado_por_horario = (not ya_jugado) and _pronostico_cerrado(p)
 
                         if editable and not ya_jugado and not cerrado_por_horario:
-                            col_gl, col_gv, col_btn, col_estado = st.columns([1, 1, 1.4, 2])
+                            col_gl, col_gv, col_btn, col_reset, col_estado = st.columns([1, 1, 1.3, 1.3, 1.6])
                             with col_gl:
                                 gl_new_pred = st.number_input(
                                     f"Goles {local}", min_value=0, max_value=15,
@@ -663,6 +727,17 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     use_container_width=True,
                                 ):
                                     if guardar_pronostico(p["id"], int(gl_new_pred), int(gv_new_pred)):
+                                        st.rerun()
+                            with col_reset:
+                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                if st.button(
+                                    "🔄 Resetear",
+                                    key=f"resetear_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                    use_container_width=True,
+                                    disabled=(gl_pred_prev is None and gv_pred_prev is None),
+                                    help="Borra el pronóstico cargado para este partido.",
+                                ):
+                                    if resetear_pronostico(p["id"]):
                                         st.rerun()
                             with col_estado:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
@@ -736,6 +811,14 @@ if not st.session_state.es_admin:
         editable=True,
         key_ns="propia",
     )
+    # Auto-refresh: si hay algún partido con horario confirmado a punto de
+    # cerrarse (o de cerrarse más adelante), esperamos y refrescamos solos
+    # para que el pronóstico se bloquee apenas llegue el momento, sin que
+    # el jugador tenga que recargar la página a mano.
+    _espera = _segundos_hasta_proximo_refresco(partidos_db)
+    if _espera is not None:
+        time.sleep(_espera)
+        st.rerun()
     st.stop()
 
 
