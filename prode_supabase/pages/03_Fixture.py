@@ -215,23 +215,70 @@ def _horario_confirmado(p) -> bool:
     return bool(p.get("fecha_partido")) and bool(p.get("hora"))
 
 
+# Formatos de fecha y hora aceptados, para bancar cómo sea que esté
+# cargado el dato en la base (texto libre, date/time de Postgres, etc.)
+_FORMATOS_FECHA = [
+    "%Y-%m-%d",   # 2026-07-25 (ISO, lo que devuelve Postgres normalmente)
+    "%d/%m/%Y",   # 25/07/2026 (formato argentino)
+    "%d-%m-%Y",   # 25-07-2026
+    "%Y/%m/%d",   # 2026/07/25
+    "%d/%m/%y",   # 25/07/26
+]
+_FORMATOS_HORA = [
+    "%H:%M:%S",   # 20:00:00 (time de Postgres)
+    "%H:%M",      # 20:00
+    "%H.%M",      # 20.00
+    "%Hhs",       # 20hs
+    "%H",         # 20
+]
+
+
+def _parsear_fecha(fecha_raw):
+    fecha_str = str(fecha_raw).strip()
+    # Si viene como timestamp ISO ("2026-07-25T00:00:00" o con espacio),
+    # nos quedamos solo con la parte de fecha.
+    fecha_str = fecha_str.split("T")[0].split(" ")[0]
+    for fmt in _FORMATOS_FECHA:
+        try:
+            return datetime.strptime(fecha_str, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parsear_hora(hora_raw):
+    hora_str = str(hora_raw).strip()
+    for fmt in _FORMATOS_HORA:
+        try:
+            return datetime.strptime(hora_str, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
 def _momento_cierre(p):
     """
-    Devuelve el datetime (con tz Argentina) a partir del cual se cierra el
-    pronóstico para ese partido (kickoff - MINUTOS_CIERRE_ANTES minutos).
-    Devuelve None si el partido todavía no tiene fecha/hora confirmada, o si
-    los datos no se pueden interpretar como fecha/hora válidas.
+    Devuelve (datetime_cierre, error) donde datetime_cierre es el momento
+    (con tz Argentina) a partir del cual se cierra el pronóstico para ese
+    partido (kickoff - MINUTOS_CIERRE_ANTES minutos), o None si no se pudo
+    calcular. `error` trae un mensaje si fecha/hora estaban cargadas pero no
+    se pudieron interpretar (para poder mostrarlo y detectar el problema,
+    en vez de fallar en silencio).
     """
     if not _horario_confirmado(p):
-        return None
-    try:
-        fecha_str = str(p["fecha_partido"])[:10]   # "YYYY-MM-DD"
-        hora_str = str(p["hora"])[:5]              # "HH:MM"
-        kickoff = datetime.strptime(f"{fecha_str} {hora_str}", "%Y-%m-%d %H:%M")
-        kickoff = kickoff.replace(tzinfo=TZ_ARG)
-        return kickoff - timedelta(minutes=MINUTOS_CIERRE_ANTES)
-    except Exception:
-        return None
+        return None, None
+
+    fecha_obj = _parsear_fecha(p["fecha_partido"])
+    hora_obj = _parsear_hora(p["hora"])
+
+    if fecha_obj is None or hora_obj is None:
+        return None, (
+            f"No se pudo interpretar fecha/hora del partido "
+            f"(fecha_partido={p.get('fecha_partido')!r}, hora={p.get('hora')!r})."
+        )
+
+    kickoff = datetime.combine(fecha_obj, hora_obj, tzinfo=TZ_ARG)
+    return kickoff - timedelta(minutes=MINUTOS_CIERRE_ANTES), None
 
 
 def _pronostico_cerrado(p) -> bool:
@@ -240,10 +287,14 @@ def _pronostico_cerrado(p) -> bool:
     cierre (a partir de MINUTOS_CIERRE_ANTES minutos antes del partido, hora
     de Argentina). Si no hay fecha/hora confirmada, nunca se cierra por esta
     vía (solo se cierra cuando el partido ya fue jugado).
+
+    Si hay fecha/hora cargadas pero no se pudieron interpretar, se cierra
+    igual por seguridad (mejor bloquear de más que dejar pronosticar un
+    partido que ya empezó por un problema de formato).
     """
-    cierre = _momento_cierre(p)
+    cierre, error = _momento_cierre(p)
     if cierre is None:
-        return False
+        return error is not None  # confirmado pero ilegible -> cerrar por seguridad
     ahora = datetime.now(TZ_ARG)
     return ahora >= cierre
 
@@ -637,6 +688,15 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                         f'(desde {MINUTOS_CIERRE_ANTES} min. antes del partido)</span>',
                                         unsafe_allow_html=True,
                                     )
+                                if st.session_state.es_admin:
+                                    _cierre_dbg, _error_dbg = _momento_cierre(p)
+                                    if _error_dbg:
+                                        st.caption(f"⚠️ {_error_dbg}")
+                                    elif _cierre_dbg is not None:
+                                        st.caption(
+                                            f"🕒 Cierre de pronóstico: {_cierre_dbg.strftime('%d/%m/%Y %H:%M')} (ARG) · "
+                                            f"Ahora: {datetime.now(TZ_ARG).strftime('%d/%m/%Y %H:%M')} (ARG)"
+                                        )
                             with col_pts:
                                 if ya_jugado and signo_prev:
                                     pts = prev.get("puntos") if prev else None
