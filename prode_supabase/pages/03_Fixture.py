@@ -22,7 +22,9 @@ import json
 import os
 import secrets
 import string
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 from database import conectar
@@ -202,6 +204,48 @@ def _hash_pwd(pwd: str) -> str:
 def _generar_password(largo: int = 8) -> str:
     chars = string.ascii_letters + string.digits
     return "".join(secrets.choice(chars) for _ in range(largo))
+
+
+TZ_ARG = ZoneInfo("America/Argentina/Buenos_Aires")
+MINUTOS_CIERRE_ANTES = 5
+
+
+def _horario_confirmado(p) -> bool:
+    """True si el partido tiene fecha Y hora cargadas (confirmadas)."""
+    return bool(p.get("fecha_partido")) and bool(p.get("hora"))
+
+
+def _momento_cierre(p):
+    """
+    Devuelve el datetime (con tz Argentina) a partir del cual se cierra el
+    pronóstico para ese partido (kickoff - MINUTOS_CIERRE_ANTES minutos).
+    Devuelve None si el partido todavía no tiene fecha/hora confirmada, o si
+    los datos no se pueden interpretar como fecha/hora válidas.
+    """
+    if not _horario_confirmado(p):
+        return None
+    try:
+        fecha_str = str(p["fecha_partido"])[:10]   # "YYYY-MM-DD"
+        hora_str = str(p["hora"])[:5]              # "HH:MM"
+        kickoff = datetime.strptime(f"{fecha_str} {hora_str}", "%Y-%m-%d %H:%M")
+        kickoff = kickoff.replace(tzinfo=TZ_ARG)
+        return kickoff - timedelta(minutes=MINUTOS_CIERRE_ANTES)
+    except Exception:
+        return None
+
+
+def _pronostico_cerrado(p) -> bool:
+    """
+    True si, con fecha/hora confirmada, ya estamos dentro de la ventana de
+    cierre (a partir de MINUTOS_CIERRE_ANTES minutos antes del partido, hora
+    de Argentina). Si no hay fecha/hora confirmada, nunca se cierra por esta
+    vía (solo se cierra cuando el partido ya fue jugado).
+    """
+    cierre = _momento_cierre(p)
+    if cierre is None:
+        return False
+    ahora = datetime.now(TZ_ARG)
+    return ahora >= cierre
 
 
 def _signo_a_texto(signo):
@@ -544,7 +588,9 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         gl_pred_prev = prev.get("goles_local_pred") if prev else None
                         gv_pred_prev = prev.get("goles_visitante_pred") if prev else None
 
-                        if editable and not ya_jugado:
+                        cerrado_por_horario = (not ya_jugado) and _pronostico_cerrado(p)
+
+                        if editable and not ya_jugado and not cerrado_por_horario:
                             col_gl, col_gv, col_btn, col_estado = st.columns([1, 1, 1.4, 2])
                             with col_gl:
                                 gl_new_pred = st.number_input(
@@ -572,7 +618,9 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                 st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
 
                         else:
-                            # Solo lectura o partido ya jugado
+                            # Solo lectura: partido ya jugado, o cerrado por
+                            # horario (fecha/hora confirmada y dentro de la
+                            # ventana de cierre), o boleta no editable.
                             col_pron, col_pts = st.columns([3, 2])
                             with col_pron:
                                 if gl_pred_prev is not None and gv_pred_prev is not None:
@@ -583,6 +631,12 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     )
                                 else:
                                     st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
+                                if cerrado_por_horario:
+                                    st.markdown(
+                                        '<span class="badge-admin">🔒 Pronósticos cerrados '
+                                        f'(desde {MINUTOS_CIERRE_ANTES} min. antes del partido)</span>',
+                                        unsafe_allow_html=True,
+                                    )
                             with col_pts:
                                 if ya_jugado and signo_prev:
                                     pts = prev.get("puntos") if prev else None
