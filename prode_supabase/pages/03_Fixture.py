@@ -179,6 +179,35 @@ st.markdown(
     .opcion-1x2 {
         display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
     }
+
+    /* Cajas de selección rápida Local / Empate / Visitante */
+    div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button {
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        background: rgba(255,255,255,0.04);
+        border: 2px dashed rgba(148,163,184,0.45);
+        border-radius: 16px;
+        min-height: 58px;
+        width: 100%;
+        font-size: 1.7rem;
+        line-height: 1;
+        transition: all 0.15s ease-in-out;
+    }
+    div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:hover {
+        border-color: rgba(232,201,107,0.75);
+        background: rgba(232,201,107,0.08);
+        transform: translateY(-1px);
+    }
+    div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button[kind="primary"] {
+        border-style: solid;
+        border-color: #4ade80;
+        background: rgba(74,222,128,0.14);
+        color: #4ade80;
+    }
+    .pick1x2-label {
+        text-align: center; font-size: 0.68rem; color: #94a3b8;
+        margin-top: 2px; font-family: 'Inter', sans-serif;
+    }
     </style>
     """.replace("__FONDO_AFA2026__", _FONDO_AFA2026),
     unsafe_allow_html=True,
@@ -716,18 +745,62 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         cerrado_por_horario = (not ya_jugado) and _pronostico_cerrado(p)
 
                         if editable and not ya_jugado and not cerrado_por_horario:
+                            _gl_key = f"gl_{key_ns}_{jugador_objetivo_id}_{p['id']}"
+                            _gv_key = f"gv_{key_ns}_{jugador_objetivo_id}_{p['id']}"
+
+                            # Valor actualmente cargado (lo que ya está en el
+                            # input, aunque todavía no se haya guardado) para
+                            # saber cuál de las 3 cajas mostrar como elegida.
+                            _gl_actual = st.session_state.get(
+                                _gl_key, gl_pred_prev if gl_pred_prev is not None else 0
+                            )
+                            _gv_actual = st.session_state.get(
+                                _gv_key, gv_pred_prev if gv_pred_prev is not None else 0
+                            )
+                            signo_actual = _calcular_signo(_gl_actual, _gv_actual)
+
+                            # Presets de marcador al elegir cada opción rápida
+                            # (el jugador después puede afinar el resultado
+                            # exacto con los números de abajo).
+                            _presets_signo = {"1": (1, 0), "X": (0, 0), "2": (0, 1)}
+
+                            st.markdown('<div class="pick1x2-marker"></div>', unsafe_allow_html=True)
+                            col_p1, col_px, col_p2 = st.columns(3)
+                            _opciones_1x2 = [
+                                (col_p1, "1", local),
+                                (col_px, "X", "Empate"),
+                                (col_p2, "2", visitante),
+                            ]
+                            for _col, _cod, _nombre in _opciones_1x2:
+                                with _col:
+                                    _elegido = signo_actual == _cod
+                                    if st.button(
+                                        "❌" if _elegido else "○",
+                                        key=f"pick_{_cod}_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                        type="primary" if _elegido else "secondary",
+                                        use_container_width=True,
+                                    ):
+                                        _gl_preset, _gv_preset = _presets_signo[_cod]
+                                        st.session_state[_gl_key] = _gl_preset
+                                        st.session_state[_gv_key] = _gv_preset
+                                        st.rerun()
+                                    st.markdown(
+                                        f'<div class="pick1x2-label">{_nombre}</div>',
+                                        unsafe_allow_html=True,
+                                    )
+
                             col_gl, col_gv, col_btn, col_reset, col_estado = st.columns([1, 1, 1.3, 1.3, 1.6])
                             with col_gl:
                                 gl_new_pred = st.number_input(
                                     f"Goles {local}", min_value=0, max_value=15,
                                     value=gl_pred_prev if gl_pred_prev is not None else 0,
-                                    key=f"gl_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                    key=_gl_key,
                                 )
                             with col_gv:
                                 gv_new_pred = st.number_input(
                                     f"Goles {visitante}", min_value=0, max_value=15,
                                     value=gv_pred_prev if gv_pred_prev is not None else 0,
-                                    key=f"gv_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                    key=_gv_key,
                                 )
                             with col_btn:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
@@ -826,6 +899,15 @@ if not st.session_state.es_admin:
     # para que el pronóstico se bloquee apenas llegue el momento, sin que
     # el jugador tenga que recargar la página a mano.
     _espera = _segundos_hasta_proximo_refresco(partidos_db)
+    with st.sidebar:
+        if _espera is not None:
+            st.caption(
+                f"🔄 Auto-chequeo de cierre activo · "
+                f"último chequeo: {datetime.now(TZ_ARG).strftime('%H:%M:%S')} (ARG) · "
+                f"próximo en ~{int(_espera)}s"
+            )
+        else:
+            st.caption("✅ No hay cierres pendientes por ahora.")
     if _espera is not None:
         time.sleep(_espera)
         st.rerun()
