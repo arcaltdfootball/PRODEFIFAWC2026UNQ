@@ -15,6 +15,14 @@ además de las existentes `signo_pred` y `puntos`. Si no existen, correr:
 
     ALTER TABLE pronosticos ADD COLUMN goles_local_pred integer;
     ALTER TABLE pronosticos ADD COLUMN goles_visitante_pred integer;
+
+También necesita la columna `sin_marcador` (boolean), que indica si el
+pronóstico se guardó eligiendo solo el signo (Local/Empate/Visitante) sin
+cargar un marcador exacto a mano, para que la boleta siga mostrando "–" en
+los goles aunque se recargue la página o se vuelva a entrar otro día. Si no
+existe, correr:
+
+    ALTER TABLE pronosticos ADD COLUMN sin_marcador boolean DEFAULT false;
 """
 import base64
 import hashlib
@@ -545,7 +553,7 @@ def cargar_partidos():
 def cargar_pronosticos_de(j_id):
     res = (
         sb.table("pronosticos")
-        .select("id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos")
+        .select("id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos, sin_marcador")
         .eq("jugador_id", j_id)
         .execute()
     )
@@ -600,13 +608,19 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
         no debe mostrar ninguna caja marcada)."""
         st.session_state[key] = True
 
-    def guardar_pronostico(partido_id, gl_pred, gv_pred):
+    def guardar_pronostico(partido_id, gl_pred, gv_pred, sin_marcador=False):
         """
         Guarda el pronóstico de marcador exacto (goles local/visitante).
         El signo (1/X/2) se deriva automáticamente del marcador.
         Sistema de puntaje:
           - 1 punto si acierta el signo (Local / Empate / Visitante)
           - 3 puntos en total si acierta el resultado exacto
+
+        `sin_marcador=True` indica que el jugador eligió el signo (Local /
+        Empate / Visitante) sin cargar un marcador exacto a mano: igual se
+        guarda un marcador interno (necesario porque la base no admite nulos
+        ahí), pero se deja registrado para que la boleta siga mostrando "–"
+        en los goles la próxima vez que se abra, en vez de esos números.
         """
         try:
             signo = _calcular_signo(gl_pred, gv_pred)
@@ -631,6 +645,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                 "signo_pred": signo,
                 "goles_local_pred": gl_pred,
                 "goles_visitante_pred": gv_pred,
+                "sin_marcador": sin_marcador,
             }
             if pts is not None:
                 payload["puntos"] = pts
@@ -790,13 +805,16 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                             # Son independientes: se puede elegir el signo sin
                             # cargar el marcador exacto (por eso quien solo
                             # marca una caja sigue viendo "–" en los goles,
-                            # incluso después de guardar). Usamos setdefault
-                            # (no asignación directa) para no pisar, en un
-                            # rerun posterior al guardado, la elección que ya
-                            # había hecho el jugador en esta sesión.
+                            # incluso después de guardar y de recargar la
+                            # página, gracias a la columna `sin_marcador` que
+                            # se guarda en la base). Usamos setdefault (no
+                            # asignación directa) para no pisar, en un rerun
+                            # posterior, la elección que ya había hecho el
+                            # jugador en esta sesión.
                             if gl_pred_prev is not None and gv_pred_prev is not None:
+                                _guardado_sin_marcador = bool(prev.get("sin_marcador")) if prev else False
                                 st.session_state.setdefault(_elegido_key, True)
-                                st.session_state.setdefault(_goles_key, True)
+                                st.session_state.setdefault(_goles_key, not _guardado_sin_marcador)
                             else:
                                 st.session_state.setdefault(_elegido_key, False)
                                 st.session_state.setdefault(_goles_key, False)
@@ -900,7 +918,10 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     key=f"guardar_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                     use_container_width=True,
                                 ):
-                                    if guardar_pronostico(p["id"], int(gl_new_pred), int(gv_new_pred)):
+                                    if guardar_pronostico(
+                                        p["id"], int(gl_new_pred), int(gv_new_pred),
+                                        sin_marcador=not mostrar_goles,
+                                    ):
                                         st.rerun()
                             with col_reset:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
