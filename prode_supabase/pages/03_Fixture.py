@@ -789,10 +789,14 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                             # del marcador exacto en vez del placeholder "–".
                             # Son independientes: se puede elegir el signo sin
                             # cargar el marcador exacto (por eso quien solo
-                            # marca una caja sigue viendo "–" en los goles).
+                            # marca una caja sigue viendo "–" en los goles,
+                            # incluso después de guardar). Usamos setdefault
+                            # (no asignación directa) para no pisar, en un
+                            # rerun posterior al guardado, la elección que ya
+                            # había hecho el jugador en esta sesión.
                             if gl_pred_prev is not None and gv_pred_prev is not None:
-                                st.session_state[_elegido_key] = True
-                                st.session_state[_goles_key] = True
+                                st.session_state.setdefault(_elegido_key, True)
+                                st.session_state.setdefault(_goles_key, True)
                             else:
                                 st.session_state.setdefault(_elegido_key, False)
                                 st.session_state.setdefault(_goles_key, False)
