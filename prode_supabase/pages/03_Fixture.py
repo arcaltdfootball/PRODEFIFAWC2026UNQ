@@ -593,6 +593,13 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
             return "X"
         return "2"
 
+    def _marcar_interactuado(key):
+        """Callback de on_change: marca que el jugador tocó los inputs de
+        goles a mano, para que la caja 1X2 correspondiente empiece a
+        reflejar la selección (antes de esto, un partido sin pronosticar
+        no debe mostrar ninguna caja marcada)."""
+        st.session_state[key] = True
+
     def guardar_pronostico(partido_id, gl_pred, gv_pred):
         """
         Guarda el pronóstico de marcador exacto (goles local/visitante).
@@ -773,6 +780,16 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         if editable and not ya_jugado and not cerrado_por_horario:
                             _gl_key = f"gl_{key_ns}_{jugador_objetivo_id}_{p['id']}"
                             _gv_key = f"gv_{key_ns}_{jugador_objetivo_id}_{p['id']}"
+                            _interact_key = f"interact_{key_ns}_{jugador_objetivo_id}_{p['id']}"
+
+                            # Si ya había un pronóstico guardado, arrancamos
+                            # mostrando su selección; si el partido todavía no
+                            # fue pronosticado, arrancamos "en blanco" (ninguna
+                            # caja marcada) hasta que el jugador interactúe.
+                            if gl_pred_prev is not None and gv_pred_prev is not None:
+                                st.session_state[_interact_key] = True
+                            else:
+                                st.session_state.setdefault(_interact_key, False)
 
                             # Valor actualmente cargado (lo que ya está en el
                             # input, aunque todavía no se haya guardado) para
@@ -784,6 +801,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                 _gv_key, gv_pred_prev if gv_pred_prev is not None else 0
                             )
                             signo_actual = _calcular_signo(_gl_actual, _gv_actual)
+                            interactuado = st.session_state[_interact_key]
 
                             # Presets de marcador al elegir cada opción rápida
                             # (el jugador después puede afinar el resultado
@@ -799,7 +817,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                             ]
                             for _col, _cod, _nombre in _opciones_1x2:
                                 with _col:
-                                    _elegido = signo_actual == _cod
+                                    _elegido = interactuado and signo_actual == _cod
                                     if st.button(
                                         "✕" if _elegido else "•",
                                         key=f"pick_{_cod}_{key_ns}_{jugador_objetivo_id}_{p['id']}",
@@ -809,6 +827,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                         _gl_preset, _gv_preset = _presets_signo[_cod]
                                         st.session_state[_gl_key] = _gl_preset
                                         st.session_state[_gv_key] = _gv_preset
+                                        st.session_state[_interact_key] = True
                                         st.rerun()
                                     st.markdown(
                                         f'<div class="pick1x2-label">{_nombre}</div>',
@@ -816,18 +835,45 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     )
 
                             col_gl, col_gv, col_btn, col_reset, col_estado = st.columns([1, 1, 1.3, 1.3, 1.6])
-                            with col_gl:
-                                gl_new_pred = st.number_input(
-                                    f"Goles {local}", min_value=0, max_value=15,
-                                    value=gl_pred_prev if gl_pred_prev is not None else 0,
-                                    key=_gl_key,
-                                )
-                            with col_gv:
-                                gv_new_pred = st.number_input(
-                                    f"Goles {visitante}", min_value=0, max_value=15,
-                                    value=gv_pred_prev if gv_pred_prev is not None else 0,
-                                    key=_gv_key,
-                                )
+                            if interactuado:
+                                with col_gl:
+                                    gl_new_pred = st.number_input(
+                                        f"Goles {local}", min_value=0, max_value=15,
+                                        value=gl_pred_prev if gl_pred_prev is not None else 0,
+                                        key=_gl_key,
+                                        on_change=_marcar_interactuado, args=(_interact_key,),
+                                    )
+                                with col_gv:
+                                    gv_new_pred = st.number_input(
+                                        f"Goles {visitante}", min_value=0, max_value=15,
+                                        value=gv_pred_prev if gv_pred_prev is not None else 0,
+                                        key=_gv_key,
+                                        on_change=_marcar_interactuado, args=(_interact_key,),
+                                    )
+                            else:
+                                # Todavía no se pronosticó: mostramos un
+                                # placeholder "–" en vez de un "0" (que podía
+                                # confundirse con un pronóstico real de 0-0).
+                                # Al tocarlo se "activan" los inputs numéricos.
+                                gl_new_pred, gv_new_pred = 0, 0
+                                with col_gl:
+                                    st.caption(f"Goles {local}")
+                                    if st.button(
+                                        "–", key=f"activar_gl_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                        use_container_width=True,
+                                        help="Tocá para cargar el marcador exacto",
+                                    ):
+                                        st.session_state[_interact_key] = True
+                                        st.rerun()
+                                with col_gv:
+                                    st.caption(f"Goles {visitante}")
+                                    if st.button(
+                                        "–", key=f"activar_gv_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                        use_container_width=True,
+                                        help="Tocá para cargar el marcador exacto",
+                                    ):
+                                        st.session_state[_interact_key] = True
+                                        st.rerun()
                             with col_btn:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                                 if st.button(
@@ -847,6 +893,13 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     help="Borra el pronóstico cargado para este partido.",
                                 ):
                                     if resetear_pronostico(p["id"]):
+                                        # Limpiamos también los inputs y la
+                                        # selección 1X2 en pantalla, para que
+                                        # el partido quede "sin pronosticar"
+                                        # (sin ninguna caja marcada) al toque.
+                                        st.session_state.pop(_gl_key, None)
+                                        st.session_state.pop(_gv_key, None)
+                                        st.session_state[_interact_key] = False
                                         st.rerun()
                             with col_estado:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
