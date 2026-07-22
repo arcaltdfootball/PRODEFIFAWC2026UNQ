@@ -633,6 +633,14 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
 
             if signo_real is None:
                 pts = None  # partido todavía no jugado
+            elif sin_marcador:
+                # El jugador solo eligió el signo (Local/Empate/Visitante)
+                # sin cargar un marcador exacto a mano. El marcador que se
+                # guarda en este caso es un placeholder interno (1-0, 0-0,
+                # 0-1), así que NUNCA debe dar los 3 puntos aunque ese
+                # placeholder coincida por casualidad con el resultado real:
+                # como máximo se acredita 1 punto por acertar el signo.
+                pts = 1 if signo == signo_real else 0
             elif gl_pred == gl_real and gv_pred == gv_real:
                 pts = 3
             elif signo == signo_real:
@@ -1150,7 +1158,7 @@ with tab_resultados:
 
                                     prons = (
                                         sb.table("pronosticos")
-                                        .select("id, signo_pred, goles_local_pred, goles_visitante_pred")
+                                        .select("id, signo_pred, goles_local_pred, goles_visitante_pred, sin_marcador")
                                         .eq("partido_id", p["id"])
                                         .execute()
                                         .data or []
@@ -1158,7 +1166,13 @@ with tab_resultados:
                                     for pr in prons:
                                         gl_pr = pr.get("goles_local_pred")
                                         gv_pr = pr.get("goles_visitante_pred")
-                                        if gl_pr is not None and gv_pr is not None and gl_pr == int(gl_new) and gv_pr == int(gv_new):
+                                        sin_marc_pr = bool(pr.get("sin_marcador"))
+                                        if sin_marc_pr:
+                                            # Solo pronosticó el signo (1/X/2): tope de 1
+                                            # punto, aunque el marcador placeholder guardado
+                                            # coincida con el resultado real.
+                                            pts = 1 if pr["signo_pred"] == signo_r else 0
+                                        elif gl_pr is not None and gv_pr is not None and gl_pr == int(gl_new) and gv_pr == int(gv_new):
                                             pts = 3
                                         elif pr["signo_pred"] == signo_r:
                                             pts = 1
