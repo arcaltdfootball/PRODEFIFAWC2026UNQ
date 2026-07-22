@@ -394,44 +394,53 @@ if idx >= total:
     st.session_state[key_idx] = 0
 
 # ── Navegación de partidos (mini-cards con escudos reales) ────────────────
-dot_cols = st.columns(total)
+# Se agrupan en filas de tamaño fijo (CARDS_POR_FILA), igual que se ven en
+# las fechas normales. Antes se hacía `st.columns(total)` con TODOS los
+# partidos en un solo renglón: cuando una fecha tiene muchos partidos (p.ej.
+# Fecha 6 - Interzonal con 15), Streamlit comprimía las columnas en vez de
+# bajarlas de línea y las cards terminaban superpuestas. Ahora, si no entran
+# todas en la primera fila, las que sobran se acomodan en renglones de abajo.
+CARDS_POR_FILA = 5
 _card_keys = []
-for i in range(total):
-    with dot_cols[i]:
-        p_i = lista_partidos[i]
-        esc_l = get_escudo(p_i["equipo_local"])
-        esc_v = get_escudo(p_i["equipo_visitante"])
-        is_active = (i == idx)
+for fila_ini in range(0, total, CARDS_POR_FILA):
+    fila = lista_partidos[fila_ini: fila_ini + CARDS_POR_FILA]
+    dot_cols = st.columns(len(fila))
+    for j, p_i in enumerate(fila):
+        i = fila_ini + j
+        with dot_cols[j]:
+            esc_l = get_escudo(p_i["equipo_local"])
+            esc_v = get_escudo(p_i["equipo_visitante"])
+            is_active = (i == idx)
 
-        img_l = (
-            f'<img src="{esc_l}" class="match-card-escudo">'
-            if esc_l else '<span class="match-card-fallback">🛡️</span>'
-        )
-        img_v = (
-            f'<img src="{esc_v}" class="match-card-escudo">'
-            if esc_v else '<span class="match-card-fallback">🛡️</span>'
-        )
-
-        btn_key = f"mdot_{zona_sel}_{fecha_sel}_{i}"
-        _card_keys.append(btn_key)
-
-        # escudo + botón viven en el MISMO contenedor: así el botón puede
-        # superponerse con position:absolute cubriendo el 100% del recuadro,
-        # en vez de depender de un margin-top negativo (frágil y desalineado).
-        with st.container(key=f"cardwrap_{btn_key}"):
-            st.markdown(
-                f'<div class="match-card {"active" if is_active else ""}">'
-                f'{img_l}<span class="match-card-vs">vs</span>{img_v}'
-                f'</div>',
-                unsafe_allow_html=True
+            img_l = (
+                f'<img src="{esc_l}" class="match-card-escudo">'
+                if esc_l else '<span class="match-card-fallback">🛡️</span>'
+            )
+            img_v = (
+                f'<img src="{esc_v}" class="match-card-escudo">'
+                if esc_v else '<span class="match-card-fallback">🛡️</span>'
             )
 
-            help_txt = f"{p_i['equipo_local']} vs {p_i['equipo_visitante']}"
-            if p_i.get("hora"):
-                help_txt += f" · {p_i['hora']}"
-            if st.button(" ", key=btn_key, help=help_txt):
-                st.session_state[key_idx] = i
-                st.rerun()
+            btn_key = f"mdot_{zona_sel}_{fecha_sel}_{i}"
+            _card_keys.append(btn_key)
+
+            # escudo + botón viven en el MISMO contenedor: así el botón puede
+            # superponerse con position:absolute cubriendo el 100% del recuadro,
+            # en vez de depender de un margin-top negativo (frágil y desalineado).
+            with st.container(key=f"cardwrap_{btn_key}"):
+                st.markdown(
+                    f'<div class="match-card {"active" if is_active else ""}">'
+                    f'{img_l}<span class="match-card-vs">vs</span>{img_v}'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+                help_txt = f"{p_i['equipo_local']} vs {p_i['equipo_visitante']}"
+                if p_i.get("hora"):
+                    help_txt += f" · {p_i['hora']}"
+                if st.button(" ", key=btn_key, help=help_txt):
+                    st.session_state[key_idx] = i
+                    st.rerun()
 
 
 # el botón se estira con position:absolute/inset:0 para cubrir TODO el
