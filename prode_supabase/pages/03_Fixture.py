@@ -181,32 +181,58 @@ st.markdown(
     }
 
     /* Cajas de selección rápida Local / Empate / Visitante */
+    div.pick1x2-marker + div[data-testid="stHorizontalBlock"] {
+        gap: 10px;
+    }
     div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button {
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        background: rgba(255,255,255,0.04);
-        border: 2px dashed rgba(148,163,184,0.45);
-        border-radius: 16px;
-        min-height: 58px;
+        position: relative;
+        backdrop-filter: blur(14px) saturate(160%);
+        -webkit-backdrop-filter: blur(14px) saturate(160%);
+        background: linear-gradient(150deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 70%);
+        border: 1.5px dashed rgba(148,163,184,0.35);
+        border-radius: 18px;
+        min-height: 64px;
         width: 100%;
-        font-size: 1.7rem;
-        line-height: 1;
-        transition: all 0.15s ease-in-out;
+        font-size: 1.55rem;
+        font-weight: 600;
+        color: rgba(148,163,184,0.6);
+        box-shadow: 0 4px 18px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.05);
+        transition: transform 0.18s cubic-bezier(.34,1.56,.64,1),
+                    border-color 0.18s ease, box-shadow 0.22s ease,
+                    background 0.18s ease, color 0.18s ease;
     }
     div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:hover {
-        border-color: rgba(232,201,107,0.75);
-        background: rgba(232,201,107,0.08);
-        transform: translateY(-1px);
+        border-color: rgba(232,201,107,0.8);
+        background: linear-gradient(150deg, rgba(232,201,107,0.14), rgba(232,201,107,0.02) 70%);
+        color: #e8c96b;
+        transform: translateY(-3px) scale(1.015);
+        box-shadow: 0 10px 24px rgba(232,201,107,0.18), inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+    div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button:active {
+        transform: translateY(0) scale(0.97);
     }
     div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button[kind="primary"] {
-        border-style: solid;
-        border-color: #4ade80;
-        background: rgba(74,222,128,0.14);
+        border: 1.5px solid #4ade80;
+        background: linear-gradient(150deg, rgba(74,222,128,0.24), rgba(74,222,128,0.04) 70%);
         color: #4ade80;
+        text-shadow: 0 0 20px rgba(74,222,128,0.65);
+        box-shadow: 0 0 0 3px rgba(74,222,128,0.12), 0 10px 26px rgba(74,222,128,0.28),
+                    inset 0 1px 0 rgba(255,255,255,0.08);
+        transform: scale(1.045);
+        animation: pick1x2-pop 0.28s cubic-bezier(.34,1.56,.64,1);
+    }
+    div.pick1x2-marker + div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] button[kind="primary"]:hover {
+        transform: translateY(-2px) scale(1.06);
+    }
+    @keyframes pick1x2-pop {
+        0%   { transform: scale(0.88); }
+        65%  { transform: scale(1.09); }
+        100% { transform: scale(1.045); }
     }
     .pick1x2-label {
-        text-align: center; font-size: 0.68rem; color: #94a3b8;
-        margin-top: 2px; font-family: 'Inter', sans-serif;
+        text-align: center; font-size: 0.68rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.07em; color: #94a3b8;
+        margin-top: 6px; font-family: 'Inter', sans-serif;
     }
     </style>
     """.replace("__FONDO_AFA2026__", _FONDO_AFA2026),
@@ -775,7 +801,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                 with _col:
                                     _elegido = signo_actual == _cod
                                     if st.button(
-                                        "❌" if _elegido else "○",
+                                        "✕" if _elegido else "•",
                                         key=f"pick_{_cod}_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         type="primary" if _elegido else "secondary",
                                         use_container_width=True,
