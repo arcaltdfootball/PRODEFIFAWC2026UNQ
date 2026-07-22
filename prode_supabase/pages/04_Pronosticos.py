@@ -315,7 +315,7 @@ partidos_raw = fetch_all("partidos", "*", order_cols=["zona", "fecha_numero"])
 jugadores_raw = fetch_all("jugadores", "id, nombre", order_cols=["nombre"])
 pronosticos_raw = fetch_all(
     "pronosticos",
-    "jugador_id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos",
+    "jugador_id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos, sin_marcador",
 )
 
 if not partidos_raw:
@@ -429,7 +429,8 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
             continue
         gl_p = pr.get("goles_local_pred")
         gv_p = pr.get("goles_visitante_pred")
-        if gl_p is not None and gv_p is not None:
+        sin_marc = bool(pr.get("sin_marcador"))
+        if gl_p is not None and gv_p is not None and not sin_marc:
             marcador_de[uid] = f"{gl_p}-{gv_p}"
             if ya_jugado:
                 acierto_de[uid] = (gl_p == gl_real and gv_p == gv_real) or (signo == signo_real)
