@@ -528,16 +528,16 @@ with st.sidebar:
                             st.error(f"Error al crear la cuenta: {e}")
 
 
-st.markdown('<div class="titulo-pagina">📝 FIXTURE DIGITAL</div>', unsafe_allow_html=True)
+st.markdown('<div class="titulo-pagina">BOLETA DIGITAL</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitulo-pagina">Clausura 2026 · Zona A, Zona B e Interzonal</div>',
+    '<div class="subtitulo-pagina">Clausura 2026 · Zona A / Zona B / Interzonal</div>',
     unsafe_allow_html=True,
 )
 
 if not sesion_activa:
     st.info(
         "🔒 Iniciá sesión, creá tu cuenta, o entrá como Admin en la barra lateral "
-        "para acceder al fixture."
+        "para acceder a la Boleta digital."
     )
     st.stop()
 
