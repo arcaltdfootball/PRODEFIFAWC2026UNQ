@@ -23,6 +23,19 @@ los goles aunque se recargue la página o se vuelva a entrar otro día. Si no
 existe, correr:
 
     ALTER TABLE pronosticos ADD COLUMN sin_marcador boolean DEFAULT false;
+
+También, para que el admin pueda VER la contraseña actual de cada jugador
+(no solo resetearla), la tabla `jugadores` necesita guardar la contraseña
+en texto plano además del hash. Si no existe, correr:
+
+    ALTER TABLE jugadores ADD COLUMN password_plano text;
+
+Nota de seguridad: guardar la contraseña en texto plano permite que el
+admin la vea, pero es menos seguro que solo guardar el hash. Se usa acá
+porque es un prode privado entre amigos/familia, no una app con datos
+sensibles. Los jugadores creados o con contraseña reseteada ANTES de este
+cambio no van a tener `password_plano` cargado hasta que se les resetee
+o modifique la contraseña una vez.
 """
 import base64
 import hashlib
@@ -517,6 +530,7 @@ with st.sidebar:
                                         "nombre": nombre_new.strip(),
                                         "username": user_new.strip().lower(),
                                         "password_hash": _hash_pwd(pwd_new),
+                                        "password_plano": pwd_new,
                                     })
                                     .execute()
                                 )
@@ -537,7 +551,7 @@ st.markdown(
 if not sesion_activa:
     st.info(
         "🔒 Iniciá sesión, creá tu cuenta, o entrá como Admin en la barra lateral "
-        "para acceder a la Boleta digital."
+        "para acceder a la Boleta Digital."
     )
     st.stop()
 
@@ -1253,9 +1267,10 @@ with tab_jugadores:
                     else:
                         pwd_gen = _generar_password(8)
                         sb.table("jugadores").insert({
-                            "nombre":        nombre_adm.strip(),
-                            "username":      user_adm.strip().lower(),
-                            "password_hash": _hash_pwd(pwd_gen),
+                            "nombre":         nombre_adm.strip(),
+                            "username":       user_adm.strip().lower(),
+                            "password_hash":  _hash_pwd(pwd_gen),
+                            "password_plano": pwd_gen,
                         }).execute()
                         st.success(
                             f"Jugador creado. Usuario: `{user_adm.strip().lower()}` · "
@@ -1312,10 +1327,18 @@ with tab_jugadores:
 
     st.divider()
 
-    # ── Lista jugadores con eliminar individual ───────────────────────────
+    # ── Lista jugadores: editar nombre/usuario, ver/modificar contraseña, eliminar ──
+    # Todo lo de acá abajo vive dentro de `tab_jugadores`, que a su vez está
+    # dentro del bloque `if st.session_state.es_admin:` de la página → solo
+    # el admin puede ver y usar estos controles.
     st.subheader("👥 Jugadores registrados")
     try:
-        jugadores_resp = sb.table("jugadores").select("id, nombre, username").order("nombre").execute()
+        jugadores_resp = (
+            sb.table("jugadores")
+            .select("id, nombre, username, password_plano")
+            .order("nombre")
+            .execute()
+        )
         jugadores = jugadores_resp.data or []
     except Exception as e:
         st.error(f"No se pudo listar jugadores: {e}")
@@ -1325,24 +1348,89 @@ with tab_jugadores:
         st.info("Todavía no hay jugadores registrados.")
     else:
         for j in jugadores:
-            c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
-            with c1:
-                st.write(f"**{j['nombre']}**")
-            with c2:
-                st.caption(f"@{j.get('username', '—')}")
-            with c3:
-                if st.button("🔑 Resetear contraseña", key=f"reset_{j['id']}", use_container_width=True):
+            with st.expander(f"👤 {j['nombre']}  ·  @{j.get('username', '—')}"):
+
+                # ── Editar nombre y usuario ───────────────────────────────
+                with st.form(f"form_editar_{j['id']}"):
+                    nuevo_nombre = st.text_input("Nombre", value=j["nombre"], key=f"nombre_{j['id']}")
+                    nuevo_user   = st.text_input("Usuario", value=j.get("username", ""), key=f"user_{j['id']}")
+                    guardar = st.form_submit_button("💾 Guardar cambios")
+                    if guardar:
+                        if not (nuevo_nombre.strip() and nuevo_user.strip()):
+                            st.warning("Nombre y usuario no pueden quedar vacíos.")
+                        else:
+                            nuevo_user_norm = nuevo_user.strip().lower()
+                            try:
+                                # Chequear que el usuario no esté en uso por OTRO jugador
+                                choque = (
+                                    sb.table("jugadores")
+                                    .select("id")
+                                    .eq("username", nuevo_user_norm)
+                                    .neq("id", j["id"])
+                                    .execute()
+                                )
+                                if choque.data:
+                                    st.error("Ese usuario ya lo está usando otro jugador.")
+                                else:
+                                    sb.table("jugadores").update({
+                                        "nombre":   nuevo_nombre.strip(),
+                                        "username": nuevo_user_norm,
+                                    }).eq("id", j["id"]).execute()
+                                    st.cache_data.clear()
+                                    st.toast("Datos actualizados.", icon="✅")
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al actualizar: {e}")
+                                st.exception(e)
+
+                st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+
+                # ── Ver contraseña actual ─────────────────────────────────
+                st.caption("🔑 Contraseña actual")
+                pwd_actual = j.get("password_plano")
+                if pwd_actual:
+                    st.code(pwd_actual, language=None)
+                else:
+                    st.caption(
+                        "No disponible (se creó/reseteó antes de guardar la contraseña "
+                        "en texto plano). Establecé una nueva abajo para poder verla."
+                    )
+
+                # ── Modificar contraseña a una elegida por el admin ───────
+                with st.form(f"form_pwd_manual_{j['id']}"):
+                    pwd_manual = st.text_input(
+                        "Nueva contraseña (a elección)", key=f"pwd_manual_{j['id']}"
+                    )
+                    fijar = st.form_submit_button("✏️ Establecer esta contraseña")
+                    if fijar:
+                        if not pwd_manual.strip():
+                            st.warning("Escribí una contraseña.")
+                        else:
+                            sb.table("jugadores").update({
+                                "password_hash":  _hash_pwd(pwd_manual.strip()),
+                                "password_plano": pwd_manual.strip(),
+                            }).eq("id", j["id"]).execute()
+                            st.toast(f"Contraseña de {j['nombre']} actualizada.", icon="🔑")
+                            st.rerun()
+
+                # ── Resetear contraseña (autogenerada) ────────────────────
+                if st.button("🎲 Generar contraseña aleatoria", key=f"reset_{j['id']}"):
                     nueva_pwd = _generar_password(8)
-                    sb.table("jugadores").update({"password_hash": _hash_pwd(nueva_pwd)}).eq("id", j["id"]).execute()
-                    st.success(f"Nueva contraseña para **{j['nombre']}**: `{nueva_pwd}` (copiala ahora).")
-            with c4:
-                # Botón eliminar con confirmación inline
+                    sb.table("jugadores").update({
+                        "password_hash":  _hash_pwd(nueva_pwd),
+                        "password_plano": nueva_pwd,
+                    }).eq("id", j["id"]).execute()
+                    st.success(f"Nueva contraseña para **{j['nombre']}**: `{nueva_pwd}`")
+                    st.rerun()
+
+                st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+
+                # ── Eliminar jugador con confirmación inline ──────────────
                 if st.session_state.confirmar_eliminar_id == j["id"]:
-                    # Modo confirmación
                     st.markdown(f"**¿Eliminar {j['nombre']}?**")
                     col_si2, col_no2 = st.columns(2)
                     with col_si2:
-                        if st.button("✅ Sí", key=f"del_si_{j['id']}", use_container_width=True):
+                        if st.button("✅ Sí, eliminar", key=f"del_si_{j['id']}", use_container_width=True):
                             try:
                                 # Borrar pronósticos del jugador primero
                                 sb.table("pronosticos").delete().eq("jugador_id", j["id"]).execute()
@@ -1373,7 +1461,7 @@ with tab_jugadores:
                             st.session_state.confirmar_eliminar_id = None
                             st.rerun()
                 else:
-                    if st.button("🗑️", key=f"del_{j['id']}", help="Eliminar jugador"):
+                    if st.button("🗑️ Eliminar jugador", key=f"del_{j['id']}"):
                         st.session_state.confirmar_eliminar_id = j["id"]
                         st.rerun()
 
