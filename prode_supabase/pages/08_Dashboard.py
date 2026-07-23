@@ -33,7 +33,7 @@ def _fondo_dashboard_datauri():
 
 _FONDO_DASHBOARD = _fondo_dashboard_datauri() or (
     "https://raw.githubusercontent.com/arcaltdfootball/PRODEFIFAWC2026UNQ/"
-    "main/prode_supabase/dashboard.png"
+    "main/prode_supabase/dashboard.jpg"
 )
 
 st.markdown(f"""
