@@ -211,7 +211,7 @@ try:
         for g in ganadores:
             fila = (
                 '<div class="ganador-row">'
-                '<div class="ganador-medalla">🥇</div>'
+                '<div class="ganador-medalla"></div>'
                 f'<div class="ganador-nombre">{g["nombre"]}</div>'
                 '<div class="ganador-datos">'
                 '<div class="ganador-pts-box">'
@@ -240,12 +240,12 @@ try:
         empate_html = ""
         formula_texto = "El ganador del 1° puesto se lleva el pozo completo"
 
-    titulo_ganadores = f"🥇 Líder{'es' if cant_ganadores > 1 else ''} del ranking"
+    titulo_ganadores = f"Líder{'es' if cant_ganadores > 1 else ''} del ranking"
 
     card_html = (
         '<div class="pozo-wrapper">'
         '<div class="pozo-card">'
-        '<div class="pozo-label">🏅 Premio total acumulado</div>'
+        '<div class="pozo-label"> Premio total acumulado</div>'
         f'<div class="pozo-monto">{pozo_fmt}</div>'
         f'<div class="pozo-sub">{total_participantes} participantes · $10.000 c/u</div>'
         '<div class="pozo-divider"></div>'
