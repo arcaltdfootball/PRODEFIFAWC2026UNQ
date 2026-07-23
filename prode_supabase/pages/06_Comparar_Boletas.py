@@ -441,7 +441,7 @@ with col_b:
         key="cmp_jug_2",
     )
 
-comparar = st.button("⚔️ Comparar boletas", use_container_width=True, type="primary")
+comparar = st.button("Comparar boletas", use_container_width=True, type="primary")
 
 if "cmp_activo" not in st.session_state:
     st.session_state["cmp_activo"] = False
