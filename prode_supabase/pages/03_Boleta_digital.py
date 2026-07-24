@@ -1286,13 +1286,11 @@ with tab_resultados:
                                     st.exception(e)
                         with c4:
                             st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                            deshabilitado_reset = gl_act is None and gv_act is None
                             if st.button(
                                 "🔄 Resetear partido",
                                 key=f"admin_reset_{p['id']}",
                                 use_container_width=True,
-                                disabled=deshabilitado_reset,
-                                help="Vuelve el partido a 'no disputado': borra el resultado y los puntos ya asignados.",
+                                help="Vuelve el partido a 'no disputado': borra el resultado y los puntos ya asignados (funciona aunque ya se haya jugado).",
                             ):
                                 try:
                                     sb.table("partidos").update({
