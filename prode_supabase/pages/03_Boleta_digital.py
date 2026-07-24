@@ -433,6 +433,7 @@ for key, default in [
     ("jugador_nombre", None),
     ("confirmar_eliminar_id", None),
     ("confirmar_reset_all", False),
+    ("confirmar_reset_fecha", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1081,6 +1082,88 @@ with tab_resultados:
                     key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
                 )
                 with st.expander(f"Fecha {fecha}"):
+                    clave_fecha = f"{zona}_{fecha}"
+                    ids_partidos_fecha = [p["id"] for p in partidos_fecha]
+
+                    # ── Resetear la fecha completa (todos sus partidos) ───
+                    # Solo admin (todo este bloque está dentro del guard
+                    # `if not st.session_state.es_admin: st.stop()`).
+                    if st.session_state.confirmar_reset_fecha == clave_fecha:
+                        st.error(
+                            f"¿Resetear **TODOS** los partidos de la Fecha {fecha} "
+                            f"({etiqueta_zona(zona)})? Se borran los resultados y "
+                            "los puntos ya asignados de esos partidos, **incluso "
+                            "los que ya se jugaron**. No se puede deshacer."
+                        )
+                        col_sif, col_nof = st.columns(2)
+                        with col_sif:
+                            if st.button(
+                                "✅ Sí, resetear toda la fecha",
+                                key=f"reset_fecha_si_{clave_fecha}",
+                                use_container_width=True,
+                            ):
+                                try:
+                                    sb.table("partidos").update({
+                                        "goles_local":     None,
+                                        "goles_visitante": None,
+                                    }).in_("id", ids_partidos_fecha).execute()
+
+                                    # Verificación real con SELECT fresco
+                                    verif_fecha = (
+                                        sb.table("partidos")
+                                        .select("id, goles_local, goles_visitante")
+                                        .in_("id", ids_partidos_fecha)
+                                        .execute()
+                                        .data or []
+                                    )
+                                    sin_resetear = [
+                                        f["id"] for f in verif_fecha
+                                        if f.get("goles_local") is not None or f.get("goles_visitante") is not None
+                                    ]
+                                    if sin_resetear:
+                                        st.error(
+                                            "⚠️ Se ejecutó el reseteo pero los partidos "
+                                            f"{sin_resetear} siguen con resultado cargado en "
+                                            "la base. Revisar RLS/triggers."
+                                        )
+                                        st.stop()
+
+                                    # Borrar puntos ya asignados de todos los pronósticos
+                                    # de los partidos de esta fecha (vuelven a "pendientes")
+                                    sb.table("pronosticos").update({"puntos": None}).in_(
+                                        "partido_id", ids_partidos_fecha
+                                    ).execute()
+
+                                    cargar_partidos.clear()
+                                    st.cache_data.clear()
+                                    st.session_state.confirmar_reset_fecha = None
+                                    st.toast(f"Fecha {fecha} reseteada por completo.", icon="🔄")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al resetear la fecha: {e}")
+                                    st.exception(e)
+                        with col_nof:
+                            if st.button(
+                                "❌ Cancelar",
+                                key=f"reset_fecha_no_{clave_fecha}",
+                                use_container_width=True,
+                            ):
+                                st.session_state.confirmar_reset_fecha = None
+                                st.rerun()
+                    else:
+                        if st.button(
+                            "🔄🗓️ Resetear TODA la fecha (incluso ya jugada)",
+                            key=f"reset_fecha_{clave_fecha}",
+                            help=(
+                                "Borra el resultado y los puntos de TODOS los partidos "
+                                "de esta fecha, aunque ya se hayan jugado y cargado."
+                            ),
+                        ):
+                            st.session_state.confirmar_reset_fecha = clave_fecha
+                            st.rerun()
+
+                    st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
+
                     for p in partidos_fecha:
                         local, visitante = p["equipo_local"], p["equipo_visitante"]
                         gl_act = p.get("goles_local")
