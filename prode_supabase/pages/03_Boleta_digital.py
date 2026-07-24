@@ -434,6 +434,7 @@ for key, default in [
     ("confirmar_eliminar_id", None),
     ("confirmar_reset_all", False),
     ("confirmar_reset_fecha", None),
+    ("confirmar_reset_boleta_fecha", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -755,6 +756,88 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                 )
                 cargados = sum(1 for p in partidos_fecha if p["id"] in pron)
                 with st.expander(f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"):
+
+                    # ── ADMIN: resetear la boleta completa de ESTE jugador ────
+                    # para esta fecha, aunque los partidos ya se hayan jugado.
+                    # Borra sus pronósticos (marcador, signo y puntos) de todos
+                    # los partidos de la fecha; no toca el resultado real del
+                    # partido ni las boletas de los demás jugadores.
+                    if st.session_state.es_admin:
+                        clave_boleta_fecha = f"{jugador_objetivo_id}_{zona}_{fecha}"
+                        ids_partidos_fecha_boleta = [p["id"] for p in partidos_fecha]
+
+                        if st.session_state.confirmar_reset_boleta_fecha == clave_boleta_fecha:
+                            st.error(
+                                f"¿Resetear **TODOS** los pronósticos de "
+                                f"**{jugador_objetivo_nombre}** en la Fecha {fecha} "
+                                f"({etiqueta_zona(zona)})? Se borran su marcador, "
+                                "signo y puntos de esos partidos, **incluso los que "
+                                "ya se jugaron**. No se puede deshacer."
+                            )
+                            col_sib, col_nob = st.columns(2)
+                            with col_sib:
+                                if st.button(
+                                    "✅ Sí, resetear esta boleta",
+                                    key=f"reset_boleta_fecha_si_{clave_boleta_fecha}",
+                                    use_container_width=True,
+                                ):
+                                    try:
+                                        sb.table("pronosticos").delete().eq(
+                                            "jugador_id", jugador_objetivo_id
+                                        ).in_("partido_id", ids_partidos_fecha_boleta).execute()
+
+                                        # Verificación real con SELECT fresco
+                                        sigue_boleta = (
+                                            sb.table("pronosticos")
+                                            .select("id")
+                                            .eq("jugador_id", jugador_objetivo_id)
+                                            .in_("partido_id", ids_partidos_fecha_boleta)
+                                            .execute()
+                                            .data or []
+                                        )
+                                        if sigue_boleta:
+                                            st.error(
+                                                "⚠️ Se ejecutó el reseteo pero quedaron "
+                                                f"{len(sigue_boleta)} pronósticos sin borrar en "
+                                                "la base. Revisar RLS (policy de DELETE) o "
+                                                "restricciones de foreign key."
+                                            )
+                                        else:
+                                            st.session_state.confirmar_reset_boleta_fecha = None
+                                            st.cache_data.clear()
+                                            st.toast(
+                                                f"Boleta de {jugador_objetivo_nombre} "
+                                                f"reseteada en la Fecha {fecha}.",
+                                                icon="🔄",
+                                            )
+                                            st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error al resetear la boleta: {e}")
+                                        st.exception(e)
+                            with col_nob:
+                                if st.button(
+                                    "❌ Cancelar",
+                                    key=f"reset_boleta_fecha_no_{clave_boleta_fecha}",
+                                    use_container_width=True,
+                                ):
+                                    st.session_state.confirmar_reset_boleta_fecha = None
+                                    st.rerun()
+                        else:
+                            if st.button(
+                                "🔄🗓️ Resetear boleta de este jugador en esta fecha "
+                                "(incluso ya jugada)",
+                                key=f"reset_boleta_fecha_{clave_boleta_fecha}",
+                                help=(
+                                    f"Borra el marcador, signo y puntos que cargó "
+                                    f"{jugador_objetivo_nombre} para TODOS los partidos "
+                                    "de esta fecha, aunque ya se hayan jugado."
+                                ),
+                            ):
+                                st.session_state.confirmar_reset_boleta_fecha = clave_boleta_fecha
+                                st.rerun()
+
+                        st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
+
                     for p in partidos_fecha:
                         local     = p["equipo_local"]
                         visitante = p["equipo_visitante"]
