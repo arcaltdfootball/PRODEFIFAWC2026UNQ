@@ -617,12 +617,18 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
             return "X"
         return "2"
 
-    def _marcar_interactuado(key):
+    def _marcar_interactuado(elegido_key, gl_key, gv_key, partido_id, exp_key):
         """Callback de on_change: marca que el jugador tocó los inputs de
         goles a mano, para que la caja 1X2 correspondiente empiece a
         reflejar la selección (antes de esto, un partido sin pronosticar
-        no debe mostrar ninguna caja marcada)."""
-        st.session_state[key] = True
+        no debe mostrar ninguna caja marcada), guarda el pronóstico al
+        instante (sin necesidad de un botón "Guardar") y deja marcado que
+        el expander de esta fecha debe seguir abierto en el próximo rerun."""
+        st.session_state[elegido_key] = True
+        st.session_state[exp_key] = True
+        gl_val = int(st.session_state.get(gl_key, 0))
+        gv_val = int(st.session_state.get(gv_key, 0))
+        guardar_pronostico(partido_id, gl_val, gv_val, sin_marcador=False)
 
     def guardar_pronostico(partido_id, gl_pred, gv_pred, sin_marcador=False):
         """
@@ -755,7 +761,13 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                     key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
                 )
                 cargados = sum(1 for p in partidos_fecha if p["id"] in pron)
-                with st.expander(f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"):
+                _exp_key = f"exp_abierto_{key_ns}_{jugador_objetivo_id}_{zona}_{fecha}"
+                if _exp_key not in st.session_state:
+                    st.session_state[_exp_key] = False
+                with st.expander(
+                    f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados",
+                    expanded=st.session_state[_exp_key],
+                ):
 
                     # ── ADMIN: resetear la boleta completa de ESTE jugador ────
                     # para esta fecha, aunque los partidos ya se hayan jugado.
@@ -804,6 +816,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                             )
                                         else:
                                             st.session_state.confirmar_reset_boleta_fecha = None
+                                            st.session_state[_exp_key] = True
                                             st.cache_data.clear()
                                             st.toast(
                                                 f"Boleta de {jugador_objetivo_nombre} "
@@ -821,6 +834,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     use_container_width=True,
                                 ):
                                     st.session_state.confirmar_reset_boleta_fecha = None
+                                    st.session_state[_exp_key] = True
                                     st.rerun()
                         else:
                             if st.button(
@@ -834,6 +848,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                 ),
                             ):
                                 st.session_state.confirmar_reset_boleta_fecha = clave_boleta_fecha
+                                st.session_state[_exp_key] = True
                                 st.rerun()
 
                         st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
@@ -967,27 +982,34 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                         # que si solo elegís la caja (sin
                                         # tocar el marcador) los goles siguen
                                         # mostrando "–".
+                                        guardar_pronostico(
+                                            p["id"], _gl_preset, _gv_preset,
+                                            sin_marcador=not st.session_state[_goles_key],
+                                        )
+                                        st.session_state[_exp_key] = True
                                         st.rerun()
                                     st.markdown(
                                         f'<div class="pick1x2-label">{_nombre}</div>',
                                         unsafe_allow_html=True,
                                     )
 
-                            col_gl, col_gv, col_btn, col_reset, col_estado = st.columns([1, 1, 1.3, 1.3, 1.6])
+                            col_gl, col_gv, col_reset, col_estado = st.columns([1, 1, 1.3, 1.6])
                             if mostrar_goles:
                                 with col_gl:
                                     gl_new_pred = st.number_input(
                                         f"Goles {local}", min_value=0, max_value=15,
                                         value=gl_pred_prev if gl_pred_prev is not None else 0,
                                         key=_gl_key,
-                                        on_change=_marcar_interactuado, args=(_elegido_key,),
+                                        on_change=_marcar_interactuado,
+                                        args=(_elegido_key, _gl_key, _gv_key, p["id"], _exp_key),
                                     )
                                 with col_gv:
                                     gv_new_pred = st.number_input(
                                         f"Goles {visitante}", min_value=0, max_value=15,
                                         value=gv_pred_prev if gv_pred_prev is not None else 0,
                                         key=_gv_key,
-                                        on_change=_marcar_interactuado, args=(_elegido_key,),
+                                        on_change=_marcar_interactuado,
+                                        args=(_elegido_key, _gl_key, _gv_key, p["id"], _exp_key),
                                     )
                             else:
                                 # Sin marcador exacto cargado todavía: mostramos
@@ -1006,6 +1028,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     ):
                                         st.session_state[_goles_key] = True
                                         st.session_state[_elegido_key] = True
+                                        st.session_state[_exp_key] = True
                                         st.rerun()
                                 with col_gv:
                                     st.caption(f"Goles {visitante}")
@@ -1016,18 +1039,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     ):
                                         st.session_state[_goles_key] = True
                                         st.session_state[_elegido_key] = True
-                                        st.rerun()
-                            with col_btn:
-                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                                if st.button(
-                                    "💾 Guardar pronóstico",
-                                    key=f"guardar_{key_ns}_{jugador_objetivo_id}_{p['id']}",
-                                    use_container_width=True,
-                                ):
-                                    if guardar_pronostico(
-                                        p["id"], int(gl_new_pred), int(gv_new_pred),
-                                        sin_marcador=not mostrar_goles,
-                                    ):
+                                        st.session_state[_exp_key] = True
                                         st.rerun()
                             with col_reset:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
@@ -1047,6 +1059,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                         st.session_state.pop(_gv_key, None)
                                         st.session_state[_elegido_key] = False
                                         st.session_state[_goles_key] = False
+                                        st.session_state[_exp_key] = True
                                         st.rerun()
                             with col_estado:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
