@@ -498,29 +498,41 @@ def _cerrar_sesion():
     st.rerun()
 
 
-sesion_activa = st.session_state.es_admin or st.session_state.jugador_id is not None
-
 # ══════════════════════════════════════════════════════════════════════════
 # RETORNO DESDE MERCADO PAGO — verificar pago contra la API (no confiar
-# solo en los parámetros de la URL, que se pueden manipular)
+# solo en los parámetros de la URL) y RE-LOGUEAR automáticamente al
+# jugador, porque el redirect de MP es una navegación nueva del
+# navegador y Streamlit pierde el session_state (el login) al volver.
 # ══════════════════════════════════════════════════════════════════════════
 _params_mp = st.query_params
-if _params_mp.get("pago") == "ok" and "jid" in _params_mp:
-    _cid = _params_mp.get("collection_id") or _params_mp.get("payment_id")
-    if _cid and verificar_pago(int(_params_mp["jid"]), _cid):
-        st.success("✅ ¡Pago acreditado! Ya podés participar.")
-    else:
-        st.warning(
-            "No pudimos confirmar el pago todavía. Si ya pagaste, esperá "
-            "unos segundos y recargá la página."
-        )
+if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"):
+    _jid_mp = int(_params_mp["jid"])
+
+    # Restauramos la sesión del jugador para que no tenga que volver a
+    # loguearse a mano y pueda seguir jugando directo.
+    _jrow_mp = sb.table("jugadores").select("id, nombre").eq("id", _jid_mp).execute().data
+    if _jrow_mp:
+        st.session_state.jugador_id = _jrow_mp[0]["id"]
+        st.session_state.jugador_nombre = _jrow_mp[0]["nombre"]
+        st.session_state.es_admin = False
+
+    if _params_mp.get("pago") == "ok":
+        _cid = _params_mp.get("collection_id") or _params_mp.get("payment_id")
+        if _cid and verificar_pago(_jid_mp, _cid):
+            st.success("✅ ¡Pago acreditado! Ya podés participar — bienvenido de nuevo.")
+        else:
+            st.warning(
+                "No pudimos confirmar el pago todavía. Si ya pagaste, esperá "
+                "unos segundos y volvé a entrar."
+            )
+    elif _params_mp.get("pago") == "pendiente":
+        st.info("⏳ Tu pago está pendiente de acreditación. Volvé a entrar en unos minutos.")
+    elif _params_mp.get("pago") == "fallo":
+        st.error("❌ El pago no se pudo procesar. Podés intentarlo de nuevo desde acá abajo.")
+
     st.query_params.clear()
-elif _params_mp.get("pago") == "pendiente":
-    st.info("⏳ Tu pago está pendiente de acreditación. Volvé a entrar en unos minutos.")
-    st.query_params.clear()
-elif _params_mp.get("pago") == "fallo":
-    st.error("❌ El pago no se pudo procesar. Podés intentarlo de nuevo.")
-    st.query_params.clear()
+
+sesion_activa = st.session_state.es_admin or st.session_state.jugador_id is not None
 
 # ══════════════════════════════════════════════════════════════════════════
 # SIDEBAR: LOGIN / REGISTRO
@@ -631,17 +643,27 @@ if not sesion_activa:
     st.stop()
 
 # ══════════════════════════════════════════════════════════════════════════
-# GATEO POR PAGO — un jugador (no-admin) solo entra si ya pagó la inscripción
+# GATEO POR PAGO Y POR ESTADO — un jugador (no-admin) solo entra si:
+#   1) pagó la inscripción, y
+#   2) el admin no lo ocultó/pausó manualmente (columna "activo")
 # ══════════════════════════════════════════════════════════════════════════
 if st.session_state.jugador_id and not st.session_state.es_admin:
     _jdb = (
         sb.table("jugadores")
-        .select("pagado")
+        .select("pagado, activo")
         .eq("id", st.session_state.jugador_id)
         .execute()
         .data
     )
     _pagado = bool(_jdb and _jdb[0].get("pagado"))
+    _activo = bool(_jdb and _jdb[0].get("activo", True))
+
+    if not _activo:
+        st.warning(
+            "⏸️ Tu participación está pausada por el administrador para esta "
+            "instancia del Prode. Si creés que es un error, consultale al admin."
+        )
+        st.stop()
 
     if not _pagado:
         st.warning(
@@ -1600,7 +1622,7 @@ with tab_jugadores:
     try:
         jugadores_resp = (
             sb.table("jugadores")
-            .select("id, nombre, username, password_plano, pagado")
+            .select("id, nombre, username, password_plano, pagado, activo")
             .order("nombre")
             .execute()
         )
@@ -1612,12 +1634,22 @@ with tab_jugadores:
     if not jugadores:
         st.info("Todavía no hay jugadores registrados.")
     else:
+        _n_activos_pagos = sum(1 for j in jugadores if j.get("pagado") and j.get("activo", True))
+        st.caption(f"🏆 Participantes habilitados para el pozo: **{_n_activos_pagos}** de {len(jugadores)} registrados")
+
         for j in jugadores:
-            _icono_pago = "✅" if j.get("pagado") else "🔴"
+            _pago_ok = j.get("pagado")
+            _esta_activo = j.get("activo", True)
+            if not _esta_activo:
+                _icono_pago = "⏸️"
+            elif _pago_ok:
+                _icono_pago = "✅"
+            else:
+                _icono_pago = "🔴"
             with st.expander(f"{_icono_pago} {j['nombre']}  ·  @{j.get('username', '—')}"):
 
                 # ── Estado de pago (marcar manual, ej. pagó en efectivo) ──
-                if j.get("pagado"):
+                if _pago_ok:
                     st.success("💰 Inscripción pagada")
                     if st.button("↩️ Marcar como NO pagada", key=f"despagar_{j['id']}"):
                         sb.table("jugadores").update({"pagado": False}).eq("id", j["id"]).execute()
@@ -1626,6 +1658,21 @@ with tab_jugadores:
                     st.error("💰 Inscripción NO pagada")
                     if st.button("✅ Marcar como pagada (manual)", key=f"pagar_{j['id']}"):
                         sb.table("jugadores").update({"pagado": True}).eq("id", j["id"]).execute()
+                        st.rerun()
+
+                # ── Ocultar/pausar manualmente (sin eliminar) ─────────────
+                # Útil si una fecha el jugador decide no participar: lo saca
+                # del pozo y del listado activo sin borrar su cuenta ni su
+                # historial.
+                if _esta_activo:
+                    st.info("👁️ Visible y habilitado para participar")
+                    if st.button("⏸️ Ocultar / pausar participante", key=f"pausar_{j['id']}"):
+                        sb.table("jugadores").update({"activo": False}).eq("id", j["id"]).execute()
+                        st.rerun()
+                else:
+                    st.warning("⏸️ Oculto / pausado (no cuenta para el pozo, no puede jugar)")
+                    if st.button("▶️ Reactivar participante", key=f"reactivar_{j['id']}"):
+                        sb.table("jugadores").update({"activo": True}).eq("id", j["id"]).execute()
                         st.rerun()
 
                 st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
