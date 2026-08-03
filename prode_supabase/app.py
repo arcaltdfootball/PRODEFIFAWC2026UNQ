@@ -40,8 +40,8 @@ st.info("Despliegue el menú lateral.")
 # 👇 Editá esta lista para publicar avisos a los jugadores.
 # Cada elemento de la lista es un aviso distinto (podés agregar o quitar los que quieras).
 AVISOS_IMPORTANTES = [
-    "En la Boleta Digital de AGOSTO se juegan las fechas: 3 / 4 / 5 / 6 / 7.",
-    "FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. (Hay que colocar los goles, si acertas el Marcador Excato se te otorgan 3 pts. en total, si solo agarras la condiciòn es 1 pt.)",
+    En la Boleta Digital de AGOSTO se juegan las fechas: 3 / 4 / 5 / 6 / 7.,
+    FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. Sistema de puntaje: 1 punto por acertar el resultado (Local / Empate / Visitante) · 3 puntos en total si acertás el resultado exacto.,
 ]
 
 if AVISOS_IMPORTANTES:
