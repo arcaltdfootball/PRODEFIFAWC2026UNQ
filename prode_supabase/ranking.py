@@ -20,7 +20,12 @@ def obtener_ranking():
     """
     sb = conectar()
 
-    jugadores = sb.table("jugadores").select("id, nombre").execute().data or []
+    jugadores = sb.table("jugadores").select("id, nombre, activo").execute().data or []
+    # Los jugadores pausados/ocultos por el admin (activo=False) no deben
+    # aparecer en el ranking ni sumar puntos. Si la columna todavía no
+    # existiera en algún registro viejo, se lo trata como activo (True) por
+    # defecto, para no romper nada antes de correr el ALTER TABLE.
+    jugadores = [j for j in jugadores if j.get("activo", True)]
 
     partidos = (
         sb.table("partidos")
