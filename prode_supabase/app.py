@@ -1,7 +1,7 @@
 import streamlit as st
 
 st.set_page_config(
-    page_title="PRODE FIFA WORLD CUP 2026",
+    page_title="PRODE FUTBOL ARGENTINO 2026",
     page_icon="icon2026fwc.png",
     layout="wide"
 )
@@ -267,8 +267,15 @@ try:
     from ranking import obtener_ranking
 
     sb = conectar()
-    resp_part = sb.table("jugadores").select("id").execute()
-    total_participantes = len(resp_part.data) if resp_part.data else 0
+    resp_part = sb.table("jugadores").select("id, pagado, activo").execute()
+    # El pozo solo debe sumar jugadores que pagaron la inscripción Y que no
+    # estén pausados/ocultos por el admin. Si "activo" no existiera todavía
+    # en algún registro viejo, se lo trata como True por defecto.
+    _jugadores_habilitados = [
+        j for j in (resp_part.data or [])
+        if j.get("pagado") and j.get("activo", True)
+    ]
+    total_participantes = len(_jugadores_habilitados)
     pozo = total_participantes * 10_000
 
     ranking = obtener_ranking()
