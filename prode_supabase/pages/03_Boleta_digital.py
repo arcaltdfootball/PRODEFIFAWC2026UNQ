@@ -36,35 +36,6 @@ porque es un prode privado entre amigos/familia, no una app con datos
 sensibles. Los jugadores creados o con contraseña reseteada ANTES de este
 cambio no van a tener `password_plano` cargado hasta que se les resetee
 o modifique la contraseña una vez.
-
-Panel de Admin (nuevo):
-  - El admin ahora tiene un Panel General (dashboard) con métricas rápidas.
-  - El admin puede cambiar la fecha y hora de cada partido (no solo cargar
-    el resultado), incluyendo poder dejarlo "a confirmar" de nuevo.
-  - El admin puede excluir a un jugador de una fecha puntual con un click
-    (por ejemplo, si avisó que esa fecha no participa). El jugador excluido
-    NO se borra ni se le tocan sus pronósticos de otras fechas: solo queda
-    marcado como "no participa" para esa fecha específica, para que el
-    ranking y el pozo de esa fecha no lo cuenten (ni como participante, ni
-    como plata puesta). Esta info se guarda en la tabla `participacion_fecha`
-    y queda disponible para que otras páginas (ranking, pozo) la usen.
-
-Para esto último, la tabla `participacion_fecha` necesita crearse en
-Supabase. Si no existe, correr:
-
-    CREATE TABLE participacion_fecha (
-        id bigserial PRIMARY KEY,
-        jugador_id bigint NOT NULL REFERENCES jugadores(id) ON DELETE CASCADE,
-        zona text NOT NULL,
-        fecha_numero text NOT NULL,
-        participa boolean NOT NULL DEFAULT true,
-        UNIQUE (jugador_id, zona, fecha_numero)
-    );
-
-Cualquier otra página que calcule el ranking o el pozo debería hacer un
-LEFT JOIN (o consulta aparte) contra `participacion_fecha` y excluir de
-esa fecha a los jugadores con `participa = false`, tratando como
-`participa = true` a quien no tenga fila (comportamiento por defecto).
 """
 import base64
 import hashlib
@@ -74,14 +45,63 @@ import secrets
 import string
 import time
 from datetime import datetime, timedelta
-from datetime import date as _date_cls
-from datetime import time as _dtime_cls
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import streamlit as st
+import mercadopago
 from database import conectar
 from escudos_map import url_escudo
+
+# ══════════════════════════════════════════════════════════════════════════
+# MERCADO PAGO — SDK y helpers de cobro de inscripción
+# ══════════════════════════════════════════════════════════════════════════
+sdk = mercadopago.SDK(st.secrets["MP_ACCESS_TOKEN"])
+
+
+def crear_preferencia_pago(jugador_id: int, nombre: str) -> str:
+    """Crea una preferencia de pago (Checkout Pro) para un jugador y
+    devuelve el link (init_point) al que hay que redirigirlo para pagar."""
+    base_url = st.secrets["MP_BASE_URL"]
+    preference_data = {
+        "items": [{
+            "title": f"Inscripción Prode - {nombre}",
+            "quantity": 1,
+            "unit_price": float(st.secrets["MP_MONTO"]),
+            "currency_id": "ARS",
+        }],
+        "external_reference": str(jugador_id),
+        "back_urls": {
+            "success": f"{base_url}/?pago=ok&jid={jugador_id}",
+            "pending": f"{base_url}/?pago=pendiente&jid={jugador_id}",
+            "failure": f"{base_url}/?pago=fallo&jid={jugador_id}",
+        },
+        "auto_return": "approved",
+    }
+    result = sdk.preference().create(preference_data)
+    pref = result["response"]
+    sb.table("jugadores").update({"mp_preference_id": pref["id"]}).eq("id", jugador_id).execute()
+    return pref["init_point"]
+
+
+def verificar_pago(jugador_id: int, payment_id: str) -> bool:
+    """Consulta el estado real del pago contra la API de Mercado Pago
+    (nunca confiar solo en los parámetros que vienen en la URL de retorno)."""
+    try:
+        resultado = sdk.payment().get(payment_id)
+        pago = resultado["response"]
+    except Exception:
+        return False
+    if (
+        pago.get("status") == "approved"
+        and str(pago.get("external_reference")) == str(jugador_id)
+    ):
+        sb.table("jugadores").update({
+            "pagado": True,
+            "mp_payment_id": payment_id,
+        }).eq("id", jugador_id).execute()
+        return True
+    return False
 
 
 @st.cache_data(show_spinner=False)
@@ -481,6 +501,28 @@ def _cerrar_sesion():
 sesion_activa = st.session_state.es_admin or st.session_state.jugador_id is not None
 
 # ══════════════════════════════════════════════════════════════════════════
+# RETORNO DESDE MERCADO PAGO — verificar pago contra la API (no confiar
+# solo en los parámetros de la URL, que se pueden manipular)
+# ══════════════════════════════════════════════════════════════════════════
+_params_mp = st.query_params
+if _params_mp.get("pago") == "ok" and "jid" in _params_mp:
+    _cid = _params_mp.get("collection_id") or _params_mp.get("payment_id")
+    if _cid and verificar_pago(int(_params_mp["jid"]), _cid):
+        st.success("✅ ¡Pago acreditado! Ya podés participar.")
+    else:
+        st.warning(
+            "No pudimos confirmar el pago todavía. Si ya pagaste, esperá "
+            "unos segundos y recargá la página."
+        )
+    st.query_params.clear()
+elif _params_mp.get("pago") == "pendiente":
+    st.info("⏳ Tu pago está pendiente de acreditación. Volvé a entrar en unos minutos.")
+    st.query_params.clear()
+elif _params_mp.get("pago") == "fallo":
+    st.error("❌ El pago no se pudo procesar. Podés intentarlo de nuevo.")
+    st.query_params.clear()
+
+# ══════════════════════════════════════════════════════════════════════════
 # SIDEBAR: LOGIN / REGISTRO
 # ══════════════════════════════════════════════════════════════════════════
 with st.sidebar:
@@ -588,6 +630,34 @@ if not sesion_activa:
     )
     st.stop()
 
+# ══════════════════════════════════════════════════════════════════════════
+# GATEO POR PAGO — un jugador (no-admin) solo entra si ya pagó la inscripción
+# ══════════════════════════════════════════════════════════════════════════
+if st.session_state.jugador_id and not st.session_state.es_admin:
+    _jdb = (
+        sb.table("jugadores")
+        .select("pagado")
+        .eq("id", st.session_state.jugador_id)
+        .execute()
+        .data
+    )
+    _pagado = bool(_jdb and _jdb[0].get("pagado"))
+
+    if not _pagado:
+        st.warning(
+            "⚠️ Todavía no registramos tu pago de inscripción. "
+            "Pagá para poder cargar tu boleta y participar."
+        )
+        if st.button("💳 Generar link de pago", use_container_width=True):
+            try:
+                link_pago = crear_preferencia_pago(
+                    st.session_state.jugador_id, st.session_state.jugador_nombre
+                )
+                st.link_button("➡️ Ir a pagar con Mercado Pago", link_pago, use_container_width=True)
+            except Exception as e:
+                st.error(f"No se pudo generar el link de pago: {e}")
+        st.stop()
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # DATOS COMPARTIDOS
@@ -595,53 +665,6 @@ if not sesion_activa:
 @st.cache_data(ttl=30)
 def cargar_partidos():
     return sb.table("partidos").select("*").execute().data
-
-
-@st.cache_data(ttl=30)
-def cargar_participacion_fecha():
-    """
-    Devuelve un dict {(jugador_id, zona, fecha_numero_str): participa(bool)}
-    con las exclusiones puntuales que cargó el admin (jugadores marcados
-    como "no participa" en una fecha específica). Si un jugador no tiene
-    fila para esa (zona, fecha), se asume que participa normalmente (True).
-    """
-    try:
-        filas = (
-            sb.table("participacion_fecha")
-            .select("jugador_id, zona, fecha_numero, participa")
-            .execute()
-            .data or []
-        )
-    except Exception:
-        # Si la tabla todavía no existe en la base, tratamos a todos como
-        # participantes activos (comportamiento anterior) en vez de romper
-        # la página entera.
-        return {}
-    return {
-        (f["jugador_id"], f["zona"], str(f["fecha_numero"])): bool(f["participa"])
-        for f in filas
-    }
-
-
-def jugador_participa_en_fecha(jugador_id, zona, fecha) -> bool:
-    """True si el jugador participa (cuenta para ranking/pozo) en esa
-    fecha puntual. Por defecto True si nunca se marcó lo contrario."""
-    mapa = cargar_participacion_fecha()
-    return mapa.get((jugador_id, zona, str(fecha)), True)
-
-
-def set_participacion_fecha(jugador_id, zona, fecha, participa: bool):
-    """Guarda (upsert) si un jugador participa o no en una fecha puntual."""
-    sb.table("participacion_fecha").upsert(
-        {
-            "jugador_id": jugador_id,
-            "zona": zona,
-            "fecha_numero": str(fecha),
-            "participa": participa,
-        },
-        on_conflict="jugador_id,zona,fecha_numero",
-    ).execute()
-    cargar_participacion_fecha.clear()
 
 
 def cargar_pronosticos_de(j_id):
@@ -695,18 +718,12 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
             return "X"
         return "2"
 
-    def _marcar_interactuado(elegido_key, gl_key, gv_key, partido_id, exp_key):
+    def _marcar_interactuado(key):
         """Callback de on_change: marca que el jugador tocó los inputs de
         goles a mano, para que la caja 1X2 correspondiente empiece a
         reflejar la selección (antes de esto, un partido sin pronosticar
-        no debe mostrar ninguna caja marcada), guarda el pronóstico al
-        instante (sin necesidad de un botón "Guardar") y deja marcado que
-        el expander de esta fecha debe seguir abierto en el próximo rerun."""
-        st.session_state[elegido_key] = True
-        st.session_state[exp_key] = True
-        gl_val = int(st.session_state.get(gl_key, 0))
-        gv_val = int(st.session_state.get(gv_key, 0))
-        guardar_pronostico(partido_id, gl_val, gv_val, sin_marcador=False)
+        no debe mostrar ninguna caja marcada)."""
+        st.session_state[key] = True
 
     def guardar_pronostico(partido_id, gl_pred, gv_pred, sin_marcador=False):
         """
@@ -839,25 +856,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                     key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
                 )
                 cargados = sum(1 for p in partidos_fecha if p["id"] in pron)
-                _exp_key = f"exp_abierto_{key_ns}_{jugador_objetivo_id}_{zona}_{fecha}"
-                if _exp_key not in st.session_state:
-                    st.session_state[_exp_key] = False
-
-                _participa_fecha = jugador_participa_en_fecha(jugador_objetivo_id, zona, fecha)
-                _titulo_exp = f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"
-                if not _participa_fecha:
-                    _titulo_exp += "  ·  🚫 NO PARTICIPA esta fecha"
-
-                with st.expander(
-                    _titulo_exp,
-                    expanded=st.session_state[_exp_key],
-                ):
-                    if not _participa_fecha:
-                        st.warning(
-                            f"🚫 **{jugador_objetivo_nombre}** fue marcado por el admin como "
-                            "**no participante** en esta fecha. Sus pronósticos no se cuentan "
-                            "en el ranking ni en el pozo de esta fecha puntual (sí en las demás)."
-                        )
+                with st.expander(f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"):
 
                     # ── ADMIN: resetear la boleta completa de ESTE jugador ────
                     # para esta fecha, aunque los partidos ya se hayan jugado.
@@ -906,7 +905,6 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                             )
                                         else:
                                             st.session_state.confirmar_reset_boleta_fecha = None
-                                            st.session_state[_exp_key] = True
                                             st.cache_data.clear()
                                             st.toast(
                                                 f"Boleta de {jugador_objetivo_nombre} "
@@ -924,7 +922,6 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     use_container_width=True,
                                 ):
                                     st.session_state.confirmar_reset_boleta_fecha = None
-                                    st.session_state[_exp_key] = True
                                     st.rerun()
                         else:
                             if st.button(
@@ -938,7 +935,6 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                 ),
                             ):
                                 st.session_state.confirmar_reset_boleta_fecha = clave_boleta_fecha
-                                st.session_state[_exp_key] = True
                                 st.rerun()
 
                         st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
@@ -1072,34 +1068,27 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                         # que si solo elegís la caja (sin
                                         # tocar el marcador) los goles siguen
                                         # mostrando "–".
-                                        guardar_pronostico(
-                                            p["id"], _gl_preset, _gv_preset,
-                                            sin_marcador=not st.session_state[_goles_key],
-                                        )
-                                        st.session_state[_exp_key] = True
                                         st.rerun()
                                     st.markdown(
                                         f'<div class="pick1x2-label">{_nombre}</div>',
                                         unsafe_allow_html=True,
                                     )
 
-                            col_gl, col_gv, col_reset, col_estado = st.columns([1, 1, 1.3, 1.6])
+                            col_gl, col_gv, col_btn, col_reset, col_estado = st.columns([1, 1, 1.3, 1.3, 1.6])
                             if mostrar_goles:
                                 with col_gl:
                                     gl_new_pred = st.number_input(
                                         f"Goles {local}", min_value=0, max_value=15,
                                         value=gl_pred_prev if gl_pred_prev is not None else 0,
                                         key=_gl_key,
-                                        on_change=_marcar_interactuado,
-                                        args=(_elegido_key, _gl_key, _gv_key, p["id"], _exp_key),
+                                        on_change=_marcar_interactuado, args=(_elegido_key,),
                                     )
                                 with col_gv:
                                     gv_new_pred = st.number_input(
                                         f"Goles {visitante}", min_value=0, max_value=15,
                                         value=gv_pred_prev if gv_pred_prev is not None else 0,
                                         key=_gv_key,
-                                        on_change=_marcar_interactuado,
-                                        args=(_elegido_key, _gl_key, _gv_key, p["id"], _exp_key),
+                                        on_change=_marcar_interactuado, args=(_elegido_key,),
                                     )
                             else:
                                 # Sin marcador exacto cargado todavía: mostramos
@@ -1118,7 +1107,6 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     ):
                                         st.session_state[_goles_key] = True
                                         st.session_state[_elegido_key] = True
-                                        st.session_state[_exp_key] = True
                                         st.rerun()
                                 with col_gv:
                                     st.caption(f"Goles {visitante}")
@@ -1129,7 +1117,18 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                     ):
                                         st.session_state[_goles_key] = True
                                         st.session_state[_elegido_key] = True
-                                        st.session_state[_exp_key] = True
+                                        st.rerun()
+                            with col_btn:
+                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                if st.button(
+                                    "💾 Guardar pronóstico",
+                                    key=f"guardar_{key_ns}_{jugador_objetivo_id}_{p['id']}",
+                                    use_container_width=True,
+                                ):
+                                    if guardar_pronostico(
+                                        p["id"], int(gl_new_pred), int(gv_new_pred),
+                                        sin_marcador=not mostrar_goles,
+                                    ):
                                         st.rerun()
                             with col_reset:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
@@ -1149,7 +1148,6 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                         st.session_state.pop(_gv_key, None)
                                         st.session_state[_elegido_key] = False
                                         st.session_state[_goles_key] = False
-                                        st.session_state[_exp_key] = True
                                         st.rerun()
                             with col_estado:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
@@ -1246,110 +1244,9 @@ if not st.session_state.es_admin:
 # ══════════════════════════════════════════════════════════════════════════
 # VISTA ADMIN
 # ══════════════════════════════════════════════════════════════════════════
-tab_dashboard, tab_resultados, tab_jugadores, tab_participacion, tab_boletas = st.tabs(
-    [
-        "📊 Panel General",
-        "⚽ Cargar Resultados",
-        "👥 Jugadores",
-        "🚫 Participación por Fecha",
-        "📋 Boletas de Jugadores",
-    ]
+tab_resultados, tab_jugadores, tab_boletas = st.tabs(
+    ["⚽ Cargar Resultados", "👥 Jugadores", "📋 Boletas de Jugadores"]
 )
-
-# ── Tab 0: panel general (dashboard) del administrador ────────────────────
-with tab_dashboard:
-    st.subheader("📊 Panel General")
-
-    _total_partidos = len(partidos_db)
-    _jugados = sum(
-        1 for p in partidos_db
-        if p.get("goles_local") is not None and p.get("goles_visitante") is not None
-    )
-    _pendientes = _total_partidos - _jugados
-    _con_horario = sum(1 for p in partidos_db if _horario_confirmado(p))
-    _sin_horario = _total_partidos - _con_horario
-
-    try:
-        _total_jugadores = (
-            sb.table("jugadores").select("id", count="exact").execute().count
-        )
-    except Exception:
-        _total_jugadores = None
-
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    col_m1.metric("👥 Jugadores", _total_jugadores if _total_jugadores is not None else "—")
-    col_m2.metric("⚽ Partidos totales", _total_partidos)
-    col_m3.metric("✅ Jugados", _jugados)
-    col_m4.metric("⏳ Pendientes", _pendientes)
-
-    col_m5, col_m6 = st.columns(2)
-    col_m5.metric("🕒 Con horario confirmado", _con_horario)
-    col_m6.metric("❓ Sin horario confirmado", _sin_horario)
-
-    st.markdown("<hr style='opacity:0.15;'>", unsafe_allow_html=True)
-
-    st.markdown("#### 🗓️ Próximos partidos con horario confirmado")
-    _proximos = sorted(
-        [
-            p for p in partidos_db
-            if _horario_confirmado(p)
-            and not (p.get("goles_local") is not None and p.get("goles_visitante") is not None)
-        ],
-        key=lambda p: (str(p.get("fecha_partido")), str(p.get("hora"))),
-    )[:6]
-    if _proximos:
-        for p in _proximos:
-            st.markdown(
-                f"- **{p['equipo_local']}** vs **{p['equipo_visitante']}** · "
-                f"{p.get('fecha_partido')} {p.get('hora')} · "
-                f"{etiqueta_zona(p.get('zona'))} · Fecha {p.get('fecha_numero')}"
-            )
-    else:
-        st.caption("No hay partidos pendientes con horario confirmado.")
-
-    st.markdown("#### ⚠️ Partidos pendientes sin horario confirmado")
-    _sin_horario_lista = [
-        p for p in partidos_db
-        if not _horario_confirmado(p)
-        and not (p.get("goles_local") is not None and p.get("goles_visitante") is not None)
-    ]
-    if _sin_horario_lista:
-        st.caption(
-            f"{len(_sin_horario_lista)} partido(s) todavía sin fecha/hora cargada. "
-            "Podés cargarla en la pestaña **⚽ Cargar Resultados**."
-        )
-        for p in _sin_horario_lista[:8]:
-            st.markdown(
-                f"- **{p['equipo_local']}** vs **{p['equipo_visitante']}** · "
-                f"{etiqueta_zona(p.get('zona'))} · Fecha {p.get('fecha_numero')}"
-            )
-    else:
-        st.caption("Todos los partidos pendientes ya tienen horario confirmado. ✅")
-
-    st.markdown("<hr style='opacity:0.15;'>", unsafe_allow_html=True)
-
-    st.markdown("#### 🚫 Exclusiones activas por fecha")
-    _mapa_participacion = cargar_participacion_fecha()
-    _excluidos_activos = [k for k, v in _mapa_participacion.items() if v is False]
-    if _excluidos_activos:
-        try:
-            _nombres_jug = {
-                j["id"]: j["nombre"]
-                for j in (sb.table("jugadores").select("id, nombre").execute().data or [])
-            }
-        except Exception:
-            _nombres_jug = {}
-        for (jid, zona_x, fecha_x) in _excluidos_activos:
-            st.markdown(
-                f"- 🚫 **{_nombres_jug.get(jid, f'Jugador #{jid}')}** no participa en "
-                f"{etiqueta_zona(zona_x)}, Fecha {fecha_x}"
-            )
-        st.caption(
-            "Administrá estas exclusiones desde la pestaña "
-            "**🚫 Participación por Fecha**."
-        )
-    else:
-        st.caption("No hay ningún jugador excluido de ninguna fecha en este momento.")
 
 # ── Tab 1: resultados reales ──────────────────────────────────────────────
 with tab_resultados:
@@ -1467,72 +1364,6 @@ with tab_resultados:
                             )
                         else:
                             st.markdown(f"**{local}** vs **{visitante}** — *Sin resultado*")
-
-                        # ── Cambiar fecha y hora del partido ──────────────
-                        _fecha_obj_actual = _parsear_fecha(p["fecha_partido"]) if p.get("fecha_partido") else None
-                        _hora_obj_actual = _parsear_hora(p["hora"]) if p.get("hora") else None
-                        _meta_actual = " · ".join(
-                            filter(None, [str(p.get("fecha_partido") or ""), str(p.get("hora") or ""), p.get("estadio")])
-                        ) or "Fecha/hora a confirmar"
-                        st.caption(f"🕒 Horario actual: {_meta_actual}")
-
-                        ch1, ch2, ch3, ch4 = st.columns([1.3, 1, 1, 1])
-                        with ch1:
-                            _nueva_fecha = st.date_input(
-                                "Fecha del partido",
-                                value=_fecha_obj_actual or _date_cls.today(),
-                                key=f"admin_fecha_{p['id']}",
-                            )
-                        with ch2:
-                            _nueva_hora = st.time_input(
-                                "Hora del partido",
-                                value=_hora_obj_actual or _dtime_cls(20, 0),
-                                key=f"admin_hora_{p['id']}",
-                            )
-                        with ch3:
-                            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                            if st.button(
-                                "🕒 Guardar horario",
-                                key=f"admin_save_horario_{p['id']}",
-                                use_container_width=True,
-                                help="Actualiza la fecha y hora de este partido (y recalcula el cierre de pronósticos).",
-                            ):
-                                try:
-                                    sb.table("partidos").update({
-                                        "fecha_partido": _nueva_fecha.strftime("%Y-%m-%d"),
-                                        "hora": _nueva_hora.strftime("%H:%M:%S"),
-                                    }).eq("id", p["id"]).execute()
-                                    cargar_partidos.clear()
-                                    st.cache_data.clear()
-                                    st.toast(
-                                        f"Horario de {local} vs {visitante} actualizado: "
-                                        f"{_nueva_fecha.strftime('%d/%m/%Y')} {_nueva_hora.strftime('%H:%M')}",
-                                        icon="🕒",
-                                    )
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error al guardar el horario: {e}")
-                                    st.exception(e)
-                        with ch4:
-                            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                            if st.button(
-                                "🗑️ Horario a confirmar",
-                                key=f"admin_clear_horario_{p['id']}",
-                                use_container_width=True,
-                                help="Borra la fecha/hora cargadas y vuelve a dejar el partido como 'a confirmar'.",
-                            ):
-                                try:
-                                    sb.table("partidos").update({
-                                        "fecha_partido": None,
-                                        "hora": None,
-                                    }).eq("id", p["id"]).execute()
-                                    cargar_partidos.clear()
-                                    st.cache_data.clear()
-                                    st.toast(f"Horario de {local} vs {visitante} vuelto a 'a confirmar'.", icon="🗑️")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error al borrar el horario: {e}")
-                                    st.exception(e)
 
                         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
                         with c1:
@@ -1769,7 +1600,7 @@ with tab_jugadores:
     try:
         jugadores_resp = (
             sb.table("jugadores")
-            .select("id, nombre, username, password_plano")
+            .select("id, nombre, username, password_plano, pagado")
             .order("nombre")
             .execute()
         )
@@ -1782,7 +1613,22 @@ with tab_jugadores:
         st.info("Todavía no hay jugadores registrados.")
     else:
         for j in jugadores:
-            with st.expander(f"👤 {j['nombre']}  ·  @{j.get('username', '—')}"):
+            _icono_pago = "✅" if j.get("pagado") else "🔴"
+            with st.expander(f"{_icono_pago} {j['nombre']}  ·  @{j.get('username', '—')}"):
+
+                # ── Estado de pago (marcar manual, ej. pagó en efectivo) ──
+                if j.get("pagado"):
+                    st.success("💰 Inscripción pagada")
+                    if st.button("↩️ Marcar como NO pagada", key=f"despagar_{j['id']}"):
+                        sb.table("jugadores").update({"pagado": False}).eq("id", j["id"]).execute()
+                        st.rerun()
+                else:
+                    st.error("💰 Inscripción NO pagada")
+                    if st.button("✅ Marcar como pagada (manual)", key=f"pagar_{j['id']}"):
+                        sb.table("jugadores").update({"pagado": True}).eq("id", j["id"]).execute()
+                        st.rerun()
+
+                st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
 
                 # ── Editar nombre y usuario ───────────────────────────────
                 with st.form(f"form_editar_{j['id']}"):
@@ -1898,93 +1744,6 @@ with tab_jugadores:
                     if st.button("🗑️ Eliminar jugador", key=f"del_{j['id']}"):
                         st.session_state.confirmar_eliminar_id = j["id"]
                         st.rerun()
-
-
-# ── Tab: excluir/reincluir jugadores de una fecha puntual ─────────────────
-with tab_participacion:
-    st.caption(
-        "Marcá con un click qué jugadores **no participan** en una fecha "
-        "puntual (por ejemplo, si avisaron que esa fecha no juegan). No se "
-        "borra al jugador ni se tocan sus pronósticos de otras fechas: solo "
-        "queda excluido de esa fecha específica para que el ranking y el "
-        "pozo de esa fecha no lo cuenten (ni como participante, ni como "
-        "plata puesta)."
-    )
-
-    try:
-        jugadores_part = (
-            sb.table("jugadores").select("id, nombre").order("nombre").execute().data or []
-        )
-    except Exception as e:
-        st.error(f"No se pudo listar jugadores: {e}")
-        jugadores_part = []
-
-    if not jugadores_part:
-        st.info("Todavía no hay jugadores registrados.")
-    else:
-        por_zona_part, zonas_orden_part = agrupar_por_zona_fecha(partidos_db)
-        tabs_part = st.tabs([etiqueta_zona(z) for z in zonas_orden_part])
-        for tab_p, zona_p in zip(tabs_part, zonas_orden_part):
-            with tab_p:
-                fechas_part = sorted(por_zona_part[zona_p].keys(), key=int)
-                for fecha_p in fechas_part:
-                    with st.expander(f"Fecha {fecha_p}"):
-                        _mapa_part = cargar_participacion_fecha()
-                        _excluidos_en_fecha = 0
-
-                        for jp in jugadores_part:
-                            _participa_jp = _mapa_part.get(
-                                (jp["id"], zona_p, str(fecha_p)), True
-                            )
-                            if not _participa_jp:
-                                _excluidos_en_fecha += 1
-
-                            col_nom_p, col_btn_p = st.columns([3, 1.4])
-                            with col_nom_p:
-                                if _participa_jp:
-                                    st.markdown(f"✅ **{jp['nombre']}**")
-                                else:
-                                    st.markdown(
-                                        f"🚫 ~~{jp['nombre']}~~ · *no participa esta fecha*"
-                                    )
-                            with col_btn_p:
-                                _etiqueta_btn = "🚫 Excluir de esta fecha" if _participa_jp else "✅ Reincluir en esta fecha"
-                                if st.button(
-                                    _etiqueta_btn,
-                                    key=f"toggle_part_{jp['id']}_{zona_p}_{fecha_p}",
-                                    use_container_width=True,
-                                ):
-                                    try:
-                                        set_participacion_fecha(
-                                            jp["id"], zona_p, fecha_p, not _participa_jp
-                                        )
-                                        st.cache_data.clear()
-                                        if _participa_jp:
-                                            st.toast(
-                                                f"{jp['nombre']} excluido de la Fecha {fecha_p} "
-                                                f"({etiqueta_zona(zona_p)}). No se contará en el "
-                                                "ranking ni en el pozo de esta fecha.",
-                                                icon="🚫",
-                                            )
-                                        else:
-                                            st.toast(
-                                                f"{jp['nombre']} reincluido en la Fecha {fecha_p} "
-                                                f"({etiqueta_zona(zona_p)}).",
-                                                icon="✅",
-                                            )
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error al actualizar participación: {e}")
-                                        st.exception(e)
-
-                        st.markdown("<hr style='opacity:0.1;'>", unsafe_allow_html=True)
-                        _total_jug_fecha = len(jugadores_part)
-                        _activos_fecha = _total_jug_fecha - _excluidos_en_fecha
-                        st.caption(
-                            f"👥 Participantes activos en esta fecha: "
-                            f"**{_activos_fecha} / {_total_jug_fecha}**"
-                            + (f"  ·  🚫 {_excluidos_en_fecha} excluido(s)" if _excluidos_en_fecha else "")
-                        )
 
 
 # ── Tab 3: ver/editar boleta de cualquier jugador ─────────────────────────
