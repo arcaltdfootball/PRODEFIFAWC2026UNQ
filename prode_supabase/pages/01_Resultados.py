@@ -574,11 +574,11 @@ if partido_jugado:
         '</div>'
     )
     if gl > gv:
-        result_bar_html = f'<div class="result-bar">🏆 Ganó {local}</div>'
+        result_bar_html = f'<div class="result-bar">Ganó {local}</div>'
     elif gv > gl:
-        result_bar_html = f'<div class="result-bar">🏆 Ganó {visitante}</div>'
+        result_bar_html = f'<div class="result-bar">Ganó {visitante}</div>'
     else:
-        result_bar_html = '<div class="result-bar empate">⚖️ Empate</div>'
+        result_bar_html = '<div class="result-bar empate">Empate</div>'
 else:
     score_center_html = '<span class="score-vs">VS</span>'
     if estado == "confirmado":
