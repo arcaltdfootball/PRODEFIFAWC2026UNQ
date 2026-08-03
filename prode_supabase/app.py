@@ -32,7 +32,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("PRODE FIFA WORLD CUP 2026")
+st.title("PRODE FUTBOL ARGENTINO 2026")
 
 st.info("Despliegue el menú lateral.")
 
@@ -40,13 +40,13 @@ st.info("Despliegue el menú lateral.")
 # 👇 Editá esta lista para publicar avisos a los jugadores.
 # Cada elemento de la lista es un aviso distinto (podés agregar o quitar los que quieras).
 AVISOS_IMPORTANTES = [
-    "Recordá cargar tus pronósticos antes del inicio de cada partido.",
-    "El pozo se reparte entre los líderes del ranking al finalizar el torneo.",
+    "En la Boleta Digital de AGOSTO se juegan las fechas: 3 / 4 / 5 / 6 / 7.",
+    "FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. (Hay que colocar los goles, si acertas el Marcador Excato se te otorgan 3 pts. en total, si solo agarras la condiciòn es 1 pt.)",
 ]
 
 if AVISOS_IMPORTANTES:
     avisos_html = "".join(
-        f'<div class="aviso-item">📌 {aviso}</div>' for aviso in AVISOS_IMPORTANTES
+        f'<div class="aviso-item">{aviso}</div>' for aviso in AVISOS_IMPORTANTES
     )
     aviso_box_html = (
         '<div class="aviso-wrapper">'
@@ -291,7 +291,7 @@ try:
         for g in ganadores:
             fila = (
                 '<div class="ganador-row">'
-                '<div class="ganador-medalla">🥇</div>'
+                '<div class="ganador-medalla"></div>'
                 f'<div class="ganador-nombre">{g["nombre"]}</div>'
                 '<div class="ganador-datos">'
                 '<div class="ganador-pts-box">'
@@ -320,7 +320,7 @@ try:
         empate_html = ""
         formula_texto = "El ganador del 1° puesto se lleva el pozo completo"
 
-    titulo_ganadores = f"🥇 Líder{'es' if cant_ganadores > 1 else ''} del ranking"
+    titulo_ganadores = f" Líder{'es' if cant_ganadores > 1 else ''} del ranking"
 
     logo_header_html = (
         f'<div class="pozo-logo-header"><img src="data:image/png;base64,{LOGO_BASE64}"></div>'
@@ -331,7 +331,7 @@ try:
         '<div class="pozo-wrapper">'
         '<div class="pozo-card">'
         f'{logo_header_html}'
-        '<div class="pozo-label">🏅 Premio total acumulado</div>'
+        '<div class="pozo-label">Premio total acumulado</div>'
         f'<div class="pozo-monto">{pozo_fmt}</div>'
         f'<div class="pozo-sub">{total_participantes} participantes · $10.000 c/u</div>'
         '<div class="pozo-divider"></div>'
