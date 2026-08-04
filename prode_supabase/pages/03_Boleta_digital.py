@@ -689,9 +689,14 @@ if not sesion_activa:
     st.stop()
 
 # ══════════════════════════════════════════════════════════════════════════
-# GATEO POR PAGO Y POR ESTADO — un jugador (no-admin) solo entra si:
-#   1) pagó la inscripción, y
-#   2) el admin no lo ocultó/pausó manualmente (columna "activo")
+# GATEO POR PAGO Y POR ESTADO — un jugador (no-admin) solo entra si pagó.
+# Si además está pausado ("activo" = False) por el admin:
+#   - si YA pagó, lo dejamos entrar igual a cargar/editar su boleta y sus
+#     pronósticos con normalidad (solo avisamos que no cuenta para el
+#     ranking ni para el pozo mientras dure la pausa);
+#   - si NO pagó, no entra (igual que cualquier jugador sin pago).
+# El "no contar para ranking/pozo" ya lo maneja el resto del sistema
+# filtrando por la columna "activo" (Ranking, Resultados, pozo del admin).
 # ══════════════════════════════════════════════════════════════════════════
 if st.session_state.jugador_id and not st.session_state.es_admin:
     _jdb = (
@@ -705,11 +710,19 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
     _activo = bool(_jdb and _jdb[0].get("activo", True))
 
     if not _activo:
-        st.warning(
-            "⏸️ Tu participación está pausada por el administrador para esta "
-            "instancia del Prode. Si creés que es un error, consultale al admin."
-        )
-        st.stop()
+        if _pagado:
+            st.info(
+                "⏸️ Tu participación está pausada por el administrador: no vas "
+                "a aparecer en el ranking ni contar para el pozo mientras dure "
+                "la pausa, pero podés seguir cargando/editando tu boleta con "
+                "normalidad."
+            )
+        else:
+            st.warning(
+                "⏸️ Tu participación está pausada por el administrador para esta "
+                "instancia del Prode. Si creés que es un error, consultale al admin."
+            )
+            st.stop()
 
     if not _pagado:
         st.warning(
