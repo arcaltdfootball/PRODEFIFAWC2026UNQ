@@ -4,6 +4,7 @@ import base64
 import math
 from pathlib import Path
 from ranking import obtener_ranking
+from database import conectar
 
 try:
     from excel_export import exportar_ranking
@@ -201,11 +202,117 @@ st.markdown("""
 
 # ── Cargar datos ──────────────────────────────────────────────────────────────
 try:
+    sb = conectar()
+except Exception as e:
+    st.error(f"Error al conectar con la base de datos: {e}")
+    st.stop()
+
+try:
     ranking = obtener_ranking()
 except Exception as e:
     st.error(f"Error al conectar con la base de datos: {e}")
     st.exception(e)
     st.stop()
+
+# `obtener_ranking()` ya devuelve solo jugadores habilitados (pagaron y no
+# están pausados por el admin) — el filtro vive en ranking.py.
+try:
+    _jugadores_raw = sb.table("jugadores").select("id, nombre, pagado, activo").execute().data or []
+except Exception as e:
+    st.error(f"No se pudo leer la lista de jugadores: {e}")
+    _jugadores_raw = []
+
+_ids_habilitados = {
+    j["id"] for j in _jugadores_raw if j.get("pagado") and j.get("activo", True)
+}
+
+
+# ── Ranking mensual: agrupa por Fecha→Mes asignado desde el admin ──────────
+def obtener_meses_disponibles():
+    """Devuelve los meses configurados, ordenados cronológicamente según la
+    fecha (jornada) más chica que tengan asignada."""
+    try:
+        filas = sb.table("fecha_mes_map").select("fecha_numero, mes").execute().data or []
+    except Exception:
+        return []
+    orden = {}
+    for r in filas:
+        orden.setdefault(r["mes"], []).append(r["fecha_numero"])
+    return sorted(orden.keys(), key=lambda m: min(orden[m]))
+
+
+def obtener_ranking_mensual(mes, ids_habilitados):
+    """Misma lógica de puntaje que ranking.obtener_ranking() (1 pto por
+    signo, 3 en total si es exacto; "disputado" = el partido ya tiene
+    goles_local/goles_visitante cargados), pero acotada a los partidos de
+    las Fechas asignadas a `mes`."""
+    fechas = [
+        r["fecha_numero"]
+        for r in sb.table("fecha_mes_map").select("fecha_numero").eq("mes", mes).execute().data or []
+    ]
+    if not fechas:
+        return []
+
+    partidos_mes = (
+        sb.table("partidos")
+        .select("id, goles_local, goles_visitante")
+        .in_("fecha_numero", fechas)
+        .execute()
+        .data
+        or []
+    )
+    partidos_por_id = {p["id"]: p for p in partidos_mes}
+    if not partidos_por_id:
+        return []
+
+    pronos = (
+        sb.table("pronosticos")
+        .select("jugador_id, partido_id, puntos")
+        .in_("partido_id", list(partidos_por_id.keys()))
+        .execute()
+        .data
+        or []
+    )
+
+    agregados = {}
+    for pr in pronos:
+        jid = pr["jugador_id"]
+        if jid not in ids_habilitados:
+            continue
+        partido = partidos_por_id.get(pr["partido_id"])
+        if not partido:
+            continue
+        gl_real = partido.get("goles_local")
+        gv_real = partido.get("goles_visitante")
+        if gl_real is None or gv_real is None:
+            continue  # partido todavía no jugado: no cuenta como disputado
+
+        a = agregados.setdefault(jid, {"puntos": 0, "aciertos": 0, "disputados": 0, "aciertos_exactos": 0})
+        a["disputados"] += 1
+        pts = pr.get("puntos") or 0
+        a["puntos"] += pts
+        if pts >= 3:
+            a["aciertos"] += 1
+            a["aciertos_exactos"] += 1
+        elif pts >= 1:
+            a["aciertos"] += 1
+
+    nombres_por_id = {j["id"]: j["nombre"] for j in _jugadores_raw}
+    filas = [
+        {
+            "nombre": nombres_por_id.get(jid, f"Jugador {jid}"),
+            "puntos": a["puntos"],
+            "aciertos": a["aciertos"],
+            "disputados": a["disputados"],
+            "aciertos_exactos": a["aciertos_exactos"],
+        }
+        for jid, a in agregados.items()
+    ]
+    filas.sort(key=lambda x: x["puntos"], reverse=True)
+    return filas
+
+
+_meses_disponibles = obtener_meses_disponibles()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def calcular_efectividad(aciertos, disputados):
@@ -364,23 +471,53 @@ def render_ranking(df_full, busqueda, session_key):
 # ── Preparar DataFrame ────────────────────────────────────────────────────────
 df_general = build_df(ranking, "pos_ant_general")
 
-# ── Búsqueda ──────────────────────────────────────────────────────────────────
-busqueda = st.text_input("🔍  Buscar participante", placeholder="Nombre...")
+# ── Tabs: General + un tab por mes configurado ──────────────────────────────
+_nombres_tabs = ["🏆 General"] + [f"🗓️ {m}" for m in _meses_disponibles]
+_tabs = st.tabs(_nombres_tabs)
 
-# ── Exportar a Excel (si está disponible) ──────────────────────────────────────
-if TIENE_EXCEL:
-    col_exp, _ = st.columns([1, 4])
-    with col_exp:
-        try:
-            excel_bytes = exportar_ranking(df_general)
-            st.download_button(
-                "⬇️ Exportar ranking (Excel)",
-                data=excel_bytes,
-                file_name="ranking_liga_profesional_argentina.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+with _tabs[0]:
+    busqueda = st.text_input("🔍  Buscar participante", placeholder="Nombre...", key="busq_general")
+
+    if TIENE_EXCEL:
+        col_exp, _ = st.columns([1, 4])
+        with col_exp:
+            try:
+                excel_bytes = exportar_ranking(df_general)
+                st.download_button(
+                    "⬇️ Exportar ranking (Excel)",
+                    data=excel_bytes,
+                    file_name="ranking_liga_profesional_argentina.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_general",
+                )
+            except Exception:
+                pass
+
+    render_ranking(df_general, busqueda, "pos_ant_general")
+
+for _tab, _mes in zip(_tabs[1:], _meses_disponibles):
+    with _tab:
+        _ranking_mes = obtener_ranking_mensual(_mes, _ids_habilitados)
+        if not _ranking_mes:
+            st.info(f"Todavía no hay puntos cargados para {_mes}.")
+        else:
+            _key_mes = f"pos_ant_mes_{_mes}"
+            df_mes = build_df(_ranking_mes, _key_mes)
+            busqueda_mes = st.text_input(
+                "🔍  Buscar participante", placeholder="Nombre...", key=f"busq_{_mes}"
             )
-        except Exception:
-            pass
-
-# ── Tabla de ranking ────────────────────────────────────────────────────────────
-render_ranking(df_general, busqueda, "pos_ant_general")
+            if TIENE_EXCEL:
+                col_exp_m, _ = st.columns([1, 4])
+                with col_exp_m:
+                    try:
+                        excel_bytes_m = exportar_ranking(df_mes)
+                        st.download_button(
+                            f"⬇️ Exportar ranking de {_mes} (Excel)",
+                            data=excel_bytes_m,
+                            file_name=f"ranking_{_mes.replace(' ', '_')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"dl_{_mes}",
+                        )
+                    except Exception:
+                        pass
+            render_ranking(df_mes, busqueda_mes, _key_mes)
