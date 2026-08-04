@@ -17,15 +17,14 @@ def obtener_ranking():
                             signo o por resultado exacto)
       - disputados        (partidos ya jugados sobre los que había pronóstico)
       - aciertos_exactos  (partidos donde acertó el marcador exacto, 3 pts)
+
+    Solo incluye jugadores HABILITADOS: que pagaron la inscripción
+    (columna `pagado`) y que el admin no los ocultó/pausó (columna `activo`).
     """
     sb = conectar()
 
-    jugadores = sb.table("jugadores").select("id, nombre, activo").execute().data or []
-    # Los jugadores pausados/ocultos por el admin (activo=False) no deben
-    # aparecer en el ranking ni sumar puntos. Si la columna todavía no
-    # existiera en algún registro viejo, se lo trata como activo (True) por
-    # defecto, para no romper nada antes de correr el ALTER TABLE.
-    jugadores = [j for j in jugadores if j.get("activo", True)]
+    jugadores = sb.table("jugadores").select("id, nombre, pagado, activo").execute().data or []
+    jugadores = [j for j in jugadores if j.get("pagado") and j.get("activo", True)]
 
     partidos = (
         sb.table("partidos")
