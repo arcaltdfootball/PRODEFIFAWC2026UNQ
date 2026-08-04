@@ -488,6 +488,7 @@ for key, default in [
     ("confirmar_reset_fecha", None),
     ("confirmar_reset_boleta_fecha", None),
     ("_recien_logueado", False),
+    ("confirmar_marcar_no_pagado_todos", False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1609,6 +1610,69 @@ with tab_resultados:
                                 except Exception as e:
                                     st.error(f"Error al resetear: {e}")
                                     st.exception(e)
+
+                        # ── Modificar horario manualmente ─────────────────
+                        # Además de poder cargarse/corregirse directo en la
+                        # base de datos, el admin puede hacerlo a mano desde
+                        # acá (fecha y hora usadas para calcular el cierre
+                        # del pronóstico de ese partido).
+                        with st.expander(f"🕒 Modificar horario — {local} vs {visitante}"):
+                            _fecha_actual_h = _parsear_fecha(p.get("fecha_partido")) or datetime.now(TZ_ARG).date()
+                            _hora_actual_h = _parsear_hora(p.get("hora")) or datetime.now(TZ_ARG).time().replace(second=0, microsecond=0)
+                            ch1, ch2, ch3 = st.columns([1, 1, 1])
+                            with ch1:
+                                nueva_fecha_h = st.date_input(
+                                    "Fecha del partido",
+                                    value=_fecha_actual_h,
+                                    key=f"admin_fecha_{p['id']}",
+                                )
+                            with ch2:
+                                nueva_hora_h = st.time_input(
+                                    "Hora del partido",
+                                    value=_hora_actual_h,
+                                    key=f"admin_hora_{p['id']}",
+                                )
+                            with ch3:
+                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                if st.button(
+                                    "🕒 Guardar horario",
+                                    key=f"admin_save_horario_{p['id']}",
+                                    use_container_width=True,
+                                ):
+                                    try:
+                                        sb.table("partidos").update({
+                                            "fecha_partido": nueva_fecha_h.strftime("%Y-%m-%d"),
+                                            "hora":          nueva_hora_h.strftime("%H:%M"),
+                                        }).eq("id", p["id"]).execute()
+
+                                        # Verificación real con SELECT fresco
+                                        verif_hor = (
+                                            sb.table("partidos")
+                                            .select("id, fecha_partido, hora")
+                                            .eq("id", p["id"])
+                                            .execute()
+                                            .data
+                                        )
+                                        fila_hor = verif_hor[0] if verif_hor else None
+                                        if not fila_hor or _parsear_fecha(fila_hor.get("fecha_partido")) != nueva_fecha_h or _parsear_hora(fila_hor.get("hora")) != nueva_hora_h:
+                                            st.error(
+                                                "⚠️ Se ejecutó el guardado pero el horario en la "
+                                                f"base sigue distinto: `{fila_hor}`. Revisar RLS/triggers."
+                                            )
+                                            st.stop()
+
+                                        cargar_partidos.clear()
+                                        st.cache_data.clear()
+                                        st.toast(
+                                            f"Horario actualizado: {nueva_fecha_h.strftime('%d/%m/%Y')} "
+                                            f"{nueva_hora_h.strftime('%H:%M')}",
+                                            icon="🕒",
+                                        )
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error al actualizar el horario: {e}")
+                                        st.exception(e)
+
                         st.markdown("<hr style='opacity:0.08;'>", unsafe_allow_html=True)
 
 
@@ -1688,6 +1752,54 @@ with tab_jugadores:
         with col_no:
             if st.button("❌ Cancelar"):
                 st.session_state.confirmar_reset_all = False
+                st.rerun()
+
+    st.divider()
+
+    # ── Marcar a TODOS como NO pagada la inscripción (masivo) ─────────────
+    st.subheader("💸 Marcar a todos como NO pagada la inscripción")
+    st.caption(
+        "Pone `pagado = No` a **todos** los jugadores de una sola vez, en vez "
+        "de tener que desmarcarlos uno por uno. Útil para arrancar una nueva "
+        "instancia/mes del Prode desde cero en materia de pagos. No toca el "
+        "estado de pausado/activo de nadie."
+    )
+
+    if not st.session_state.confirmar_marcar_no_pagado_todos:
+        if st.button("💸 Marcar TODOS como NO pagado", type="secondary"):
+            st.session_state.confirmar_marcar_no_pagado_todos = True
+            st.rerun()
+    else:
+        st.error(
+            "¿Confirmás marcar a **todos** los jugadores como NO pagada la "
+            "inscripción? Van a dejar de poder cargar boleta hasta que "
+            "vuelvan a pagar (o hasta que los marques pagados de nuevo)."
+        )
+        col_mp_si, col_mp_no = st.columns(2)
+        with col_mp_si:
+            if st.button("✅ Sí, marcar a todos como NO pagado", type="primary"):
+                try:
+                    sb.table("jugadores").update({"pagado": False}).neq("id", 0).execute()
+
+                    # Verificación real con SELECT fresco
+                    verif_pago = sb.table("jugadores").select("id, pagado").execute().data or []
+                    aun_pagados = [f["id"] for f in verif_pago if f.get("pagado")]
+                    if aun_pagados:
+                        st.error(
+                            "⚠️ Se ejecutó la acción pero los jugadores "
+                            f"{aun_pagados} siguen marcados como pagados en la "
+                            "base. Revisar RLS/triggers."
+                        )
+                    else:
+                        st.session_state.confirmar_marcar_no_pagado_todos = False
+                        st.toast("✅ Todos los jugadores quedaron como NO pagado.", icon="💸")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error al actualizar los pagos: {e}")
+                    st.exception(e)
+        with col_mp_no:
+            if st.button("❌ Cancelar", key="cancelar_marcar_no_pagado_todos"):
+                st.session_state.confirmar_marcar_no_pagado_todos = False
                 st.rerun()
 
     st.divider()
