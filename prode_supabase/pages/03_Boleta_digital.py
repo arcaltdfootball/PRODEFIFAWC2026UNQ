@@ -1266,8 +1266,8 @@ if not st.session_state.es_admin:
 # ══════════════════════════════════════════════════════════════════════════
 # VISTA ADMIN
 # ══════════════════════════════════════════════════════════════════════════
-tab_resultados, tab_jugadores, tab_boletas = st.tabs(
-    ["⚽ Cargar Resultados", "👥 Jugadores", "📋 Boletas de Jugadores"]
+tab_resultados, tab_jugadores, tab_boletas, tab_meses = st.tabs(
+    ["⚽ Cargar Resultados", "👥 Jugadores", "📋 Boletas de Jugadores", "🗓️ Meses (Ranking)"]
 )
 
 # ── Tab 1: resultados reales ──────────────────────────────────────────────
@@ -1810,3 +1810,60 @@ with tab_boletas:
         jid_sel      = nombres_map[nombre_sel]
         editar_admin = st.checkbox("Permitir editar esta boleta como admin", value=False, key="chk_editar_admin")
         mostrar_boleta(jid_sel, nombre_sel, editable=editar_admin, key_ns=f"admin_{jid_sel}")
+
+
+# ── Tab 4: asignar cada Fecha a un mes (para el ranking mensual) ───────────
+with tab_meses:
+    st.caption(
+        "Asigná cada Fecha (jornada) al mes que corresponda. Esto se usa para "
+        "mostrar un ranking separado por mes en la página de Ranking, además "
+        "del ranking general."
+    )
+
+    _fechas_todas = sorted({p["fecha_numero"] for p in partidos_db if p.get("fecha_numero") is not None})
+
+    if not _fechas_todas:
+        st.info("Todavía no hay partidos/fechas cargados en el fixture.")
+    else:
+        try:
+            _map_actual = sb.table("fecha_mes_map").select("fecha_numero, mes").execute().data or []
+        except Exception as e:
+            st.error(
+                f"No se pudo leer la tabla `fecha_mes_map`: {e}\n\n"
+                "¿Corriste el SQL que la crea? Revisá `supabase_mercadopago.sql`."
+            )
+            _map_actual = []
+
+        _mes_por_fecha = {r["fecha_numero"]: r["mes"] for r in _map_actual}
+        _meses_existentes = sorted({m for m in _mes_por_fecha.values() if m})
+
+        st.write("**Meses ya usados:**", ", ".join(_meses_existentes) if _meses_existentes else "—")
+        st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+
+        with st.form("form_asignar_meses"):
+            _nuevas_asignaciones = {}
+            for _f in _fechas_todas:
+                _valor_actual = _mes_por_fecha.get(_f, "")
+                _nuevas_asignaciones[_f] = st.text_input(
+                    f"Fecha {_f} → mes",
+                    value=_valor_actual,
+                    placeholder="Ej: Agosto 2026",
+                    key=f"mes_fecha_{_f}",
+                )
+            _guardar_meses = st.form_submit_button("💾 Guardar asignación de meses", use_container_width=True)
+
+        if _guardar_meses:
+            try:
+                for _f, _mes_val in _nuevas_asignaciones.items():
+                    _mes_val = (_mes_val or "").strip()
+                    if _mes_val:
+                        sb.table("fecha_mes_map").upsert(
+                            {"fecha_numero": _f, "mes": _mes_val}, on_conflict="fecha_numero"
+                        ).execute()
+                    else:
+                        sb.table("fecha_mes_map").delete().eq("fecha_numero", _f).execute()
+                st.success("✅ Asignación de meses guardada.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"No se pudo guardar: {e}")
+
