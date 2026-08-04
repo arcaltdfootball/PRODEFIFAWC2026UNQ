@@ -49,6 +49,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import streamlit as st
+import streamlit.components.v1 as components
 import mercadopago
 from database import conectar
 from escudos_map import url_escudo
@@ -486,6 +487,7 @@ for key, default in [
     ("confirmar_reset_all", False),
     ("confirmar_reset_fecha", None),
     ("confirmar_reset_boleta_fecha", None),
+    ("_recien_logueado", False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -496,6 +498,43 @@ def _cerrar_sesion():
     st.session_state.jugador_id = None
     st.session_state.jugador_nombre = None
     st.rerun()
+
+
+def _cerrar_sidebar_automaticamente():
+    """Colapsa la barra lateral vía JS justo después de loguearse (como
+    jugador o admin) o de crear una cuenta nueva, para que no quede
+    abierta confundiendo al usuario sobre en qué página está parado."""
+    components.html(
+        """
+        <script>
+        (function () {
+            function intentarCerrar(intentos) {
+                if (intentos <= 0) return;
+                const doc = window.parent.document;
+                let btn = doc.querySelector('[data-testid="stSidebarCollapseButton"] button');
+                if (!btn) btn = doc.querySelector('[data-testid="stSidebarCollapseButton"]');
+                if (!btn) {
+                    const candidatos = doc.querySelectorAll('button[aria-label]');
+                    for (const c of candidatos) {
+                        const lbl = (c.getAttribute('aria-label') || '').toLowerCase();
+                        if (lbl.includes('sidebar') || lbl.includes('collapse')) {
+                            btn = c;
+                            break;
+                        }
+                    }
+                }
+                if (btn) {
+                    btn.click();
+                } else {
+                    setTimeout(function () { intentarCerrar(intentos - 1); }, 150);
+                }
+            }
+            intentarCerrar(15);
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -566,6 +605,7 @@ with st.sidebar:
             if st.button("Ingresar", use_container_width=True, key="btn_admin"):
                 if user_a.strip() == ADMIN_USERNAME and pwd_a == ADMIN_PASSWORD:
                     st.session_state.es_admin = True
+                    st.session_state._recien_logueado = True
                     st.rerun()
                 else:
                     st.error("Usuario o contraseña de admin incorrectos.")
@@ -587,6 +627,7 @@ with st.sidebar:
                         if res.data and res.data[0].get("password_hash") == _hash_pwd(pwd_in):
                             st.session_state.jugador_id     = res.data[0]["id"]
                             st.session_state.jugador_nombre = res.data[0]["nombre"]
+                            st.session_state._recien_logueado = True
                             st.rerun()
                         else:
                             st.error("Usuario o contraseña incorrectos.")
@@ -623,11 +664,16 @@ with st.sidebar:
                                 )
                                 st.session_state.jugador_id     = nuevo.data[0]["id"]
                                 st.session_state.jugador_nombre = nuevo.data[0]["nombre"]
+                                st.session_state._recien_logueado = True
                                 st.success("¡Cuenta creada! Ya podés cargar tu boleta.")
                                 st.rerun()
                         except Exception as e:
                             st.error(f"Error al crear la cuenta: {e}")
 
+
+if st.session_state._recien_logueado:
+    st.session_state._recien_logueado = False
+    _cerrar_sidebar_automaticamente()
 
 st.markdown('<div class="titulo-pagina">BOLETA DIGITAL</div>', unsafe_allow_html=True)
 st.markdown(
