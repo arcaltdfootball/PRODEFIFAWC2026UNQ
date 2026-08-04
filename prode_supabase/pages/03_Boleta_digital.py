@@ -729,14 +729,33 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
             "⚠️ Todavía no registramos tu pago de inscripción. "
             "Pagá para poder cargar tu boleta y participar."
         )
-        if st.button("💳 Generar link de pago", use_container_width=True):
-            try:
-                link_pago = crear_preferencia_pago(
+        try:
+            _link_key = f"_link_pago_{st.session_state.jugador_id}"
+            if not st.session_state.get(_link_key):
+                st.session_state[_link_key] = crear_preferencia_pago(
                     st.session_state.jugador_id, st.session_state.jugador_nombre
                 )
-                st.link_button("➡️ Ir a pagar con Mercado Pago", link_pago, use_container_width=True)
-            except Exception as e:
-                st.error(f"No se pudo generar el link de pago: {e}")
+            link_pago = st.session_state[_link_key]
+
+            st.markdown(
+                f"""
+                <a href="{link_pago}" target="_blank" rel="noopener noreferrer"
+                   style="
+                        display:flex; align-items:center; justify-content:center;
+                        gap:10px; width:100%; box-sizing:border-box;
+                        background-color:#00b1ea; color:#ffffff;
+                        text-decoration:none; font-weight:700; font-size:17px;
+                        padding:14px 18px; border-radius:8px; font-family:inherit;
+                        box-shadow:0 2px 6px rgba(0,0,0,0.15);">
+                    <img src="https://http2.mlstatic.com/frontend-assets/mp-web-navigation/ui-navigation/6.6.2/mercadopago/logo__large@2x.png"
+                         alt="Mercado Pago" style="height:22px; display:block;">
+                    <span>Ir a pagar a Mercado Pago</span>
+                </a>
+                """,
+                unsafe_allow_html=True,
+            )
+        except Exception as e:
+            st.error(f"No se pudo generar el link de pago: {e}")
         st.stop()
 
 
