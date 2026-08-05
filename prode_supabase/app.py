@@ -10,15 +10,26 @@ st.set_page_config(
 # Para cambiar el fondo: subí al repositorio una imagen con el mismo nombre
 # "fondo.png" (reemplazando el archivo actual) y listo, no hace falta tocar el código.
 import base64
+import os
 
-BG_IMAGE_PATH = "fondo.png"
+# Carpeta donde vive este mismo script. Usamos esto (en vez de una ruta relativa
+# suelta) porque Streamlit a veces se ejecuta desde un directorio distinto al
+# de la app, y con ruta relativa suelta el archivo no se encontraba.
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+BG_IMAGE_PATH = os.path.join(_BASE_DIR, "fondo.png")
 try:
     with open(BG_IMAGE_PATH, "rb") as _f:
         BG_IMAGE_BASE64 = base64.b64encode(_f.read()).decode()
 except FileNotFoundError:
     BG_IMAGE_BASE64 = ""
+    st.warning(
+        f"⚠️ No encontré la imagen de fondo en `{BG_IMAGE_PATH}`. "
+        "Subí un archivo llamado exactamente `fondo.png` en la misma carpeta que `app.py`."
+    )
+
 # Logo cargado desde archivo (mismo patrón que el fondo) (cabecera de la tarjeta del pozo)
-LOGO_PATH = "LOGO.png"
+LOGO_PATH = os.path.join(_BASE_DIR, "LOGO.png")
 try:
     with open(LOGO_PATH, "rb") as _f:
         LOGO_BASE64 = base64.b64encode(_f.read()).decode()
