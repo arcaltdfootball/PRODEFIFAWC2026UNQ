@@ -807,6 +807,19 @@ if not partidos_db:
 # RENDER DE BOLETA CON 1 / X / 2
 # ══════════════════════════════════════════════════════════════════════════
 def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
+    _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable, key_ns)
+
+
+@st.fragment
+def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
+    """
+    Todo el cuerpo de la boleta corre como un @st.fragment: al elegir un
+    1/X/2, tocar los goles, resetear un pronóstico, etc., Streamlit vuelve a
+    ejecutar SOLO esta parte de la página (no repite la carga de partidos,
+    el CSS, la conexión a la base, el sidebar, ni las otras pestañas), así
+    que cada acción del jugador se siente instantánea en vez de recargar
+    todo de nuevo cada vez.
+    """
     por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
     pron = cargar_pronosticos_de(jugador_objetivo_id)
 
