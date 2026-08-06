@@ -807,19 +807,6 @@ if not partidos_db:
 # RENDER DE BOLETA CON 1 / X / 2
 # ══════════════════════════════════════════════════════════════════════════
 def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
-    _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable, key_ns)
-
-
-@st.fragment
-def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
-    """
-    Todo el cuerpo de la boleta corre como un @st.fragment: al elegir un
-    1/X/2, tocar los goles, resetear un pronóstico, etc., Streamlit vuelve a
-    ejecutar SOLO esta parte de la página (no repite la carga de partidos,
-    el CSS, la conexión a la base, el sidebar, ni las otras pestañas), así
-    que cada acción del jugador se siente instantánea en vez de recargar
-    todo de nuevo cada vez.
-    """
     por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
     pron = cargar_pronosticos_de(jugador_objetivo_id)
 
@@ -1050,7 +1037,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                                 f"reseteada en la Fecha {fecha}.",
                                                 icon="🔄",
                                             )
-                                            st.rerun(scope="fragment")
+                                            st.rerun()
                                     except Exception as e:
                                         st.error(f"Error al resetear la boleta: {e}")
                                         st.exception(e)
@@ -1061,7 +1048,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                     use_container_width=True,
                                 ):
                                     st.session_state.confirmar_reset_boleta_fecha = None
-                                    st.rerun(scope="fragment")
+                                    st.rerun()
                         else:
                             if st.button(
                                 "🔄🗓️ Resetear boleta de este jugador en esta fecha "
@@ -1074,7 +1061,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                 ),
                             ):
                                 st.session_state.confirmar_reset_boleta_fecha = clave_boleta_fecha
-                                st.rerun(scope="fragment")
+                                st.rerun()
 
                         st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
 
@@ -1214,7 +1201,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                         # que si solo elegís la caja (sin
                                         # tocar el marcador) los goles siguen
                                         # mostrando "–".
-                                        st.rerun(scope="fragment")
+                                        st.rerun()
                                     st.markdown(
                                         f'<div class="pick1x2-label">{_nombre}</div>',
                                         unsafe_allow_html=True,
@@ -1259,7 +1246,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                         st.session_state[_goles_key] = True
                                         st.session_state[_elegido_key] = True
                                         guardar_pronostico(p["id"], 0, 0, sin_marcador=False)
-                                        st.rerun(scope="fragment")
+                                        st.rerun()
                                 with col_gv:
                                     st.caption(f"Goles {visitante}")
                                     if st.button(
@@ -1270,7 +1257,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                         st.session_state[_goles_key] = True
                                         st.session_state[_elegido_key] = True
                                         guardar_pronostico(p["id"], 0, 0, sin_marcador=False)
-                                        st.rerun(scope="fragment")
+                                        st.rerun()
                             with col_reset:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                                 if st.button(
@@ -1289,7 +1276,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                         st.session_state.pop(_gv_key, None)
                                         st.session_state[_elegido_key] = False
                                         st.session_state[_goles_key] = False
-                                        st.rerun(scope="fragment")
+                                        st.rerun()
                             with col_estado:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                                 st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
