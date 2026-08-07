@@ -807,6 +807,19 @@ if not partidos_db:
 # RENDER DE BOLETA CON 1 / X / 2
 # ══════════════════════════════════════════════════════════════════════════
 def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
+    _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable, key_ns)
+
+
+@st.fragment
+def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
+    """
+    Todo el cuerpo de la boleta corre como un @st.fragment: al elegir un
+    1/X/2, tocar los goles, resetear un pronóstico, etc., Streamlit vuelve a
+    ejecutar SOLO esta parte de la página (no repite la carga de partidos,
+    el CSS, la conexión a la base, el sidebar, ni las otras pestañas), así
+    que cada acción del jugador se siente instantánea en vez de recargar
+    todo de nuevo cada vez.
+    """
     por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
     pron = cargar_pronosticos_de(jugador_objetivo_id)
 
@@ -960,7 +973,11 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
             st.exception(e)
             return False
 
-    tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden])
+    # Le damos una "key" a las pestañas de Zona/Interzonal para que
+    # Streamlit recuerde cuál estaba abierta y no te saque de ahí cada vez
+    # que se guarda un pronóstico (que dispara una recarga de la página).
+    _key_tabs_zona = f"tabs_zona_{key_ns}_{jugador_objetivo_id}"
+    tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden], key=_key_tabs_zona)
     for tab, zona in zip(tabs, zonas_orden):
         with tab:
             fechas = sorted(por_zona[zona].keys(), key=int)
