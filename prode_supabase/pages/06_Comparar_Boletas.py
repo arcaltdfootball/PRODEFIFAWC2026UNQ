@@ -675,7 +675,7 @@ def build_card_partido(local, visitante, fecha_partido, hora, estadio, resultado
             + '<div class="titulo">Boletas ocultas</div>'
             + '<div class="subtitulo">La comparación entre '
             f'{n1_sel} y {n2_sel} se va a revelar automáticamente apenas '
-            'arranque el partido, para que ninguno pueda copiarse del otro.</div>'
+            'arranque el partido.</div>'
             + '</div>'
         )
 
