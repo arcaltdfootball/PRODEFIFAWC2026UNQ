@@ -778,6 +778,25 @@ def cargar_pronosticos_de(j_id):
     return {row["partido_id"]: row for row in (res.data or [])}
 
 
+def _pron_cache_key(j_id):
+    return f"_pron_cache_{j_id}"
+
+
+def _invalidar_cache_pron(j_id=None):
+    """
+    Invalida el caché en memoria (session_state) de pronósticos.
+    Si se pasa `j_id`, borra solo el caché de ese jugador. Si no, borra el
+    caché de TODOS los jugadores (para acciones masivas tipo "reset total"
+    o cuando se cargan resultados y cambian los puntos de todo el mundo).
+    """
+    if j_id is not None:
+        st.session_state.pop(_pron_cache_key(j_id), None)
+    else:
+        for k in list(st.session_state.keys()):
+            if k.startswith("_pron_cache_"):
+                del st.session_state[k]
+
+
 def agrupar_por_zona_fecha(partidos):
     por_zona = {}
     for p in partidos:
@@ -807,8 +826,31 @@ if not partidos_db:
 # RENDER DE BOLETA CON 1 / X / 2
 # ══════════════════════════════════════════════════════════════════════════
 def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
+    _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable, key_ns)
+
+
+@st.fragment
+def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
+    """
+    Todo el cuerpo de la boleta corre como un @st.fragment: al elegir un
+    1/X/2, tocar los goles, resetear un pronóstico, etc., Streamlit vuelve a
+    ejecutar SOLO esta parte de la página (no repite la carga de partidos,
+    el CSS, la conexión a la base, el sidebar, ni las otras pestañas), así
+    que cada acción del jugador se siente instantánea en vez de recargar
+    todo de nuevo cada vez.
+    """
     por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
-    pron = cargar_pronosticos_de(jugador_objetivo_id)
+
+    # Caché en memoria de los pronósticos de este jugador: se consulta la
+    # base UNA sola vez por sesión y de ahí en más se actualiza en el momento
+    # (in-place) cada vez que se guarda/borra un pronóstico, en vez de volver
+    # a pedirle todo a la base en cada click. Esto es lo que hace que cargar
+    # o cambiar un pronóstico se sienta instantáneo y no dependa de esperar
+    # una consulta más a la base cada vez.
+    _pk = _pron_cache_key(jugador_objetivo_id)
+    if _pk not in st.session_state:
+        st.session_state[_pk] = cargar_pronosticos_de(jugador_objetivo_id)
+    pron = st.session_state[_pk]
 
     def _calcular_signo(gl, gv):
         if gl is None or gv is None:
@@ -884,6 +926,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         "bloqueando el UPDATE en 'pronosticos' para la key usada."
                     )
                     return False
+                fila_id = resp.data[0].get("id", existente["id"])
             else:
                 resp = sb.table("pronosticos").insert({
                     "jugador_id": jugador_objetivo_id,
@@ -896,6 +939,20 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                         "bloqueando el INSERT en 'pronosticos' para la key usada."
                     )
                     return False
+                fila_id = resp.data[0].get("id")
+
+            # Actualizamos el caché en memoria al instante (en vez de tener
+            # que volver a consultar la base para reflejar este guardado).
+            pron[partido_id] = {
+                "id": fila_id,
+                "partido_id": partido_id,
+                "signo_pred": signo,
+                "goles_local_pred": gl_pred,
+                "goles_visitante_pred": gv_pred,
+                "puntos": pts,
+                "sin_marcador": sin_marcador,
+            }
+
             st.toast(
                 f"Pronóstico guardado: {gl_pred}-{gv_pred} ({_signo_a_texto(signo)})",
                 icon="✅",
@@ -918,6 +975,36 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
         gl_val = int(st.session_state.get(gl_key, 0))
         gv_val = int(st.session_state.get(gv_key, 0))
         guardar_pronostico(partido_id, gl_val, gv_val, sin_marcador=False)
+
+    def _elegir_signo(cod, gl_key, gv_key, elegido_key, partido_id, presets):
+        """
+        Callback de on_click de las cajas 1/X/2: guarda el pronóstico apenas
+        se toca la caja, sin depender de un botón aparte. Usar on_click (en
+        vez de leer el st.button() con un if) permite que, al vivir dentro
+        de la boleta (que corre como @st.fragment), la actualización se
+        confine a esa boleta en vez de recargar toda la página.
+        """
+        gl_preset, gv_preset = presets[cod]
+        st.session_state[gl_key] = gl_preset
+        st.session_state[gv_key] = gv_preset
+        st.session_state[elegido_key] = True
+        guardar_pronostico(partido_id, gl_preset, gv_preset, sin_marcador=True)
+
+    def _activar_marcador_exacto(goles_key, elegido_key, partido_id):
+        """Callback de on_click de los placeholders "–": activa los inputs
+        numéricos y guarda de una el 0-0 inicial."""
+        st.session_state[goles_key] = True
+        st.session_state[elegido_key] = True
+        guardar_pronostico(partido_id, 0, 0, sin_marcador=False)
+
+    def _resetear_y_limpiar(gl_key, gv_key, elegido_key, goles_key, partido_id):
+        """Callback de on_click de "Resetear": borra el pronóstico y limpia
+        los inputs en pantalla, todo en el mismo paso."""
+        if resetear_pronostico(partido_id):
+            st.session_state.pop(gl_key, None)
+            st.session_state.pop(gv_key, None)
+            st.session_state[elegido_key] = False
+            st.session_state[goles_key] = False
 
     def resetear_pronostico(partido_id):
         """
@@ -954,13 +1041,18 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                 return False
 
             st.toast("Pronóstico reseteado.", icon="🔄")
+            pron.pop(partido_id, None)
             return True
         except Exception as e:
             st.error(f"No se pudo resetear: {e}")
             st.exception(e)
             return False
 
-    tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden])
+    # Le damos una "key" a las pestañas de Zona/Interzonal para que
+    # Streamlit recuerde cuál estaba abierta y no te saque de ahí cada vez
+    # que se guarda un pronóstico (que dispara una recarga de la página).
+    _key_tabs_zona = f"tabs_zona_{key_ns}_{jugador_objetivo_id}"
+    tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden], key=_key_tabs_zona)
     for tab, zona in zip(tabs, zonas_orden):
         with tab:
             fechas = sorted(por_zona[zona].keys(), key=int)
@@ -1031,6 +1123,8 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                             )
                                         else:
                                             st.session_state.confirmar_reset_boleta_fecha = None
+                                            for _pid in ids_partidos_fecha_boleta:
+                                                pron.pop(_pid, None)
                                             st.cache_data.clear()
                                             st.toast(
                                                 f"Boleta de {jugador_objetivo_nombre} "
@@ -1180,28 +1274,14 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                             for _col, _cod, _nombre in _opciones_1x2:
                                 with _col:
                                     _elegido = elegido_activo and signo_actual == _cod
-                                    if st.button(
+                                    st.button(
                                         "✕" if _elegido else "•",
                                         key=f"pick_{_cod}_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         type="primary" if _elegido else "secondary",
                                         use_container_width=True,
-                                    ):
-                                        _gl_preset, _gv_preset = _presets_signo[_cod]
-                                        st.session_state[_gl_key] = _gl_preset
-                                        st.session_state[_gv_key] = _gv_preset
-                                        st.session_state[_elegido_key] = True
-                                        # Autoguardado: apenas elige una caja
-                                        # 1/X/2 ya queda registrado en la base,
-                                        # sin depender de un click aparte en
-                                        # "Guardar pronóstico".
-                                        guardar_pronostico(
-                                            p["id"], _gl_preset, _gv_preset, sin_marcador=True
-                                        )
-                                        # OJO: no tocamos _goles_key acá, así
-                                        # que si solo elegís la caja (sin
-                                        # tocar el marcador) los goles siguen
-                                        # mostrando "–".
-                                        st.rerun()
+                                        on_click=_elegir_signo,
+                                        args=(_cod, _gl_key, _gv_key, _elegido_key, p["id"], _presets_signo),
+                                    )
                                     st.markdown(
                                         f'<div class="pick1x2-label">{_nombre}</div>',
                                         unsafe_allow_html=True,
@@ -1238,45 +1318,33 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
                                 gv_new_pred = st.session_state.get(_gv_key, 0)
                                 with col_gl:
                                     st.caption(f"Goles {local}")
-                                    if st.button(
+                                    st.button(
                                         "–", key=f"activar_gl_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         use_container_width=True,
                                         help="Tocá para cargar el marcador exacto",
-                                    ):
-                                        st.session_state[_goles_key] = True
-                                        st.session_state[_elegido_key] = True
-                                        guardar_pronostico(p["id"], 0, 0, sin_marcador=False)
-                                        st.rerun()
+                                        on_click=_activar_marcador_exacto,
+                                        args=(_goles_key, _elegido_key, p["id"]),
+                                    )
                                 with col_gv:
                                     st.caption(f"Goles {visitante}")
-                                    if st.button(
+                                    st.button(
                                         "–", key=f"activar_gv_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         use_container_width=True,
                                         help="Tocá para cargar el marcador exacto",
-                                    ):
-                                        st.session_state[_goles_key] = True
-                                        st.session_state[_elegido_key] = True
-                                        guardar_pronostico(p["id"], 0, 0, sin_marcador=False)
-                                        st.rerun()
+                                        on_click=_activar_marcador_exacto,
+                                        args=(_goles_key, _elegido_key, p["id"]),
+                                    )
                             with col_reset:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                                if st.button(
+                                st.button(
                                     "🔄 Resetear",
                                     key=f"resetear_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                     use_container_width=True,
                                     disabled=(gl_pred_prev is None and gv_pred_prev is None),
                                     help="Borra el pronóstico cargado para este partido.",
-                                ):
-                                    if resetear_pronostico(p["id"]):
-                                        # Limpiamos también los inputs y la
-                                        # selección 1X2 en pantalla, para que
-                                        # el partido quede "sin pronosticar"
-                                        # (sin ninguna caja marcada) al toque.
-                                        st.session_state.pop(_gl_key, None)
-                                        st.session_state.pop(_gv_key, None)
-                                        st.session_state[_elegido_key] = False
-                                        st.session_state[_goles_key] = False
-                                        st.rerun()
+                                    on_click=_resetear_y_limpiar,
+                                    args=(_gl_key, _gv_key, _elegido_key, _goles_key, p["id"]),
+                                )
                             with col_estado:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                                 st.markdown(_badge_signo(signo_prev), unsafe_allow_html=True)
@@ -1448,6 +1516,7 @@ with tab_resultados:
 
                                     cargar_partidos.clear()
                                     st.cache_data.clear()
+                                    _invalidar_cache_pron()  # cambió "puntos" de todos los jugadores
                                     st.session_state.confirmar_reset_fecha = None
                                     st.toast(f"Fecha {fecha} reseteada por completo.", icon="🔄")
                                     st.rerun()
@@ -1591,6 +1660,7 @@ with tab_resultados:
 
                                     cargar_partidos.clear()
                                     st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
+                                    _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
                                     st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
                                     st.rerun()
                                 except Exception as e:
@@ -1632,6 +1702,7 @@ with tab_resultados:
 
                                     cargar_partidos.clear()
                                     st.cache_data.clear()
+                                    _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
                                     st.toast(f"Partido {local} vs {visitante} reseteado a no disputado.", icon="🔄")
                                     st.rerun()
                                 except Exception as e:
