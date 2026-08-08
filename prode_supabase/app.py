@@ -13,12 +13,13 @@ st.set_page_config(
 # en el código). Para cambiarlos: subí al repositorio un archivo con el
 # mismo nombre reemplazando el actual y listo, no hace falta tocar nada más.
 # ══════════════════════════════════════════════════════════════════════════
-BG_IMAGE_PATH = "fondo.png"
+BG_IMAGE_PATH = "AFA2026.png"
 try:
     with open(BG_IMAGE_PATH, "rb") as _f:
         BG_IMAGE_BASE64 = base64.b64encode(_f.read()).decode()
 except FileNotFoundError:
     BG_IMAGE_BASE64 = ""
+    st.warning(f"⚠️ No se encontró la imagen de fondo en la ruta '{BG_IMAGE_PATH}'. Verificá que el archivo esté en la raíz del repo.")
 
 LOGO_PATH = "LOGO.png"
 try:
@@ -26,6 +27,7 @@ try:
         LOGO_BASE64 = base64.b64encode(_f.read()).decode()
 except FileNotFoundError:
     LOGO_BASE64 = ""
+    st.warning(f"⚠️ No se encontró el logo en la ruta '{LOGO_PATH}'. Verificá que el archivo esté en la raíz del repo.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
