@@ -54,8 +54,7 @@ AVISOS_IMPORTANTES = [
 TARJETAS_INFO = [
     {
         "titulo": "Cómo se juega",
-        "texto": "Cargá tu pronóstico en BOLETA DIGITAL
-                 antes de que arranque cada partido. "
+        "texto": "Cargá tu pronóstico antes de que arranque cada partido. "
                  "1 punto por acertar Local / Empate / Visitante, 3 puntos "
                  "en total si acertás el marcador exacto.",
     },
