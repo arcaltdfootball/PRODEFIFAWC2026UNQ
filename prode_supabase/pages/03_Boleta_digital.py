@@ -428,9 +428,6 @@ def _pronostico_cerrado(p) -> bool:
     return ahora >= cierre
 
 
-AUTO_REFRESH_MAX_SEGUNDOS = 20  # tope de espera entre chequeos automáticos
-
-
 def _segundos_hasta_proximo_refresco(partidos):
     """
     Calcula cuántos segundos hay que esperar antes de refrescar la página
@@ -439,6 +436,19 @@ def _segundos_hasta_proximo_refresco(partidos):
     pronóstico se bloquee sin que el usuario tenga que hacer nada.
 
     Devuelve None si no hay ningún cierre pendiente (nada que esperar).
+
+    IMPORTANTE (rendimiento): antes esto recargaba la página COMPLETA cada
+    20 segundos como máximo, sin importar si el próximo cierre estaba en 3
+    minutos o en 3 días — o sea que, durante todo el torneo, cada jugador
+    conectado le generaba al servidor una recarga total cada 20 segundos,
+    todo el tiempo. Eso es lo que hacía sentir lenta a la app en general
+    (no solo el chequeo de horario en sí, sino la catarata de recargas
+    de fondo compitiendo con los clicks reales de la gente).
+
+    Ahora el intervalo de chequeo se ajusta según qué tan cerca esté el
+    próximo cierre: bien seguido solo cuando realmente está por cerrarse
+    algo (para que el bloqueo siga siendo preciso al segundo), y muy
+    espaciado el resto del tiempo (que es la gran mayoría).
     """
     ahora = datetime.now(TZ_ARG)
     proximos_cierres = []
@@ -454,10 +464,25 @@ def _segundos_hasta_proximo_refresco(partidos):
         return None
 
     segundos_hasta_cierre = (min(proximos_cierres) - ahora).total_seconds()
+
+    # Intervalo de chequeo según qué tan cerca esté el próximo cierre:
+    #   ≤90s   -> cada 15s  (justo antes de cerrar, precisión alta)
+    #   ≤10min -> cada 60s
+    #   ≤1h    -> cada 5 min
+    #   más lejos -> cada 15 min (alcanza y sobra, y ahorra muchísima carga)
+    if segundos_hasta_cierre <= 90:
+        intervalo_max = 15
+    elif segundos_hasta_cierre <= 600:
+        intervalo_max = 60
+    elif segundos_hasta_cierre <= 3600:
+        intervalo_max = 300
+    else:
+        intervalo_max = 900
+
     # Esperamos exactamente hasta el próximo cierre si falta poco; si falta
-    # mucho, esperamos como máximo AUTO_REFRESH_MAX_SEGUNDOS y volvemos a
-    # chequear (así no hace falta un timer exacto por cada partido).
-    return max(1.0, min(segundos_hasta_cierre + 1, AUTO_REFRESH_MAX_SEGUNDOS))
+    # mucho, esperamos como máximo `intervalo_max` y volvemos a chequear
+    # (así no hace falta un timer exacto por cada partido).
+    return max(1.0, min(segundos_hasta_cierre + 1, intervalo_max))
 
 
 def _signo_a_texto(signo):
