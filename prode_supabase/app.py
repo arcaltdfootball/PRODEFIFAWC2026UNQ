@@ -29,7 +29,7 @@ except FileNotFoundError:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 📢 AVISOS IMPORTANTES — editá esta lista para publicar avisos a los
+# AVISOS IMPORTANTES — editá esta lista para publicar avisos a los
 # jugadores. Cada elemento es un aviso distinto (agregá o quitá los que
 # quieras, no hay límite). Se renderizan como tarjetas independientes.
 # ══════════════════════════════════════════════════════════════════════════
@@ -39,34 +39,30 @@ AVISOS_IMPORTANTES = [
 ]
 
 # ══════════════════════════════════════════════════════════════════════════
-# 🃏 TARJETAS INFORMATIVAS — se muestran en una grilla debajo del pozo.
+# TARJETAS INFORMATIVAS — se muestran en una grilla debajo del pozo.
 # Agregá, editá o borrá elementos de esta lista para cambiar el contenido.
-# Cada tarjeta es un diccionario con: icono (un emoji), titulo y texto.
+# Cada tarjeta es un diccionario con: titulo y texto.
 # ══════════════════════════════════════════════════════════════════════════
 TARJETAS_INFO = [
     {
-        "icono": "⚽",
         "titulo": "Cómo se juega",
         "texto": "Cargá tu pronóstico antes de que arranque cada partido. "
                  "1 punto por acertar Local / Empate / Visitante, 3 puntos "
                  "en total si acertás el marcador exacto.",
     },
     {
-        "icono": "🏆",
         "titulo": "Cómo se arma el pozo",
         "texto": "Se suman $10.000 por cada participante inscripto y con "
                  "la cuota paga. El líder del ranking general se lo lleva "
                  "completo (se reparte en caso de empate).",
     },
     {
-        "icono": "🔒",
         "titulo": "Cierre de pronósticos",
         "texto": "Apenas arranca cada partido, esa boleta se bloquea "
                  "automáticamente: ya no se puede cargar ni modificar el "
                  "pronóstico.",
     },
     {
-        "icono": "📊",
         "titulo": "Seguí tu posición",
         "texto": "Entrá a Ranking en el menú lateral para ver tu puesto "
                  "actualizado, tus puntos y cómo te comparás con el resto.",
@@ -139,7 +135,6 @@ _CSS_GLOBAL = """
     border-radius: 12px; font-family: 'Inter', sans-serif; font-size: 0.82rem;
     color: var(--home-text-dim); text-align: center;
 }
-.home-navhint .ic { font-size: 1.05rem; flex: none; }
 
 /* ── AVISO IMPORTANTE ─────────────────────────────────────────────────── */
 .home-aviso-wrap { max-width: 720px; margin: 0 auto 32px; }
@@ -156,13 +151,7 @@ _CSS_GLOBAL = """
     background: repeating-linear-gradient(135deg, #FFC53D 0 14px, #14161c 14px 28px);
     opacity: 0.92;
 }
-.home-aviso-head { display: flex; align-items: center; gap: 16px; margin: 6px 0 18px; flex-wrap: wrap; }
-.home-aviso-icon {
-    flex: none; width: 54px; height: 54px; border-radius: 13px;
-    display: flex; align-items: center; justify-content: center; font-size: 1.7rem;
-    background: linear-gradient(150deg, rgba(255,90,90,0.38), rgba(255,90,90,0.08));
-    border: 1px solid rgba(255,90,90,0.5); box-shadow: 0 0 24px rgba(255,60,60,0.28);
-}
+.home-aviso-head { text-align: center; margin: 6px 0 18px; }
 .home-aviso-kicker {
     font-family: 'Inter', sans-serif; font-size: 0.66rem; font-weight: 600;
     letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,180,180,0.8);
@@ -252,7 +241,6 @@ _CSS_GLOBAL = """
     content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%;
     background: linear-gradient(180deg, #FFD700, #FFA500);
 }
-.home-ganador-medalla { font-size: 1.6rem; line-height: 1; filter: drop-shadow(0 2px 6px rgba(255,215,0,0.5)); }
 .home-ganador-nombre {
     font-family: 'Inter', sans-serif; font-weight: 700; font-size: 1rem; color: #fff;
     flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -318,7 +306,6 @@ _CSS_GLOBAL = """
     content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
     background: var(--accent, var(--home-gold));
 }
-.home-info-icon { font-size: 1.5rem; margin-bottom: 10px; display: block; }
 .home-info-titulo {
     font-family: 'Bebas Neue', sans-serif; font-size: 1.05rem; letter-spacing: 1px;
     color: #fff; margin-bottom: 6px;
@@ -347,7 +334,7 @@ st.markdown(
 )
 
 st.markdown(
-    '<div class="home-navhint"><span class="ic">📋</span>'
+    '<div class="home-navhint">'
     '<span>Desplegá el menú lateral para cargar tu boleta, ver el fixture, '
     'los resultados y el ranking.</span></div>',
     unsafe_allow_html=True,
@@ -366,11 +353,8 @@ if AVISOS_IMPORTANTES:
         '<div class="home-aviso-wrap">'
         '<div class="home-aviso-card">'
         '<div class="home-aviso-head">'
-        '<div class="home-aviso-icon">⚠️</div>'
-        '<div>'
         '<div class="home-aviso-kicker">Atención participantes</div>'
         '<div class="home-aviso-title">AVISO IMPORTANTE</div>'
-        '</div>'
         '</div>'
         f'<div class="home-aviso-list">{avisos_html}</div>'
         '</div>'
@@ -418,7 +402,6 @@ try:
         for g in ganadores:
             fila = (
                 '<div class="home-ganador-row">'
-                '<div class="home-ganador-medalla">🏅</div>'
                 f'<div class="home-ganador-nombre">{g["nombre"]}</div>'
                 '<div class="home-ganador-datos">'
                 '<div class="home-ganador-pts-box">'
@@ -439,7 +422,7 @@ try:
 
     if cant_ganadores > 1:
         empate_html = (
-            f'<div class="home-empate-nota">⚡ Empate entre {cant_ganadores} participantes '
+            f'<div class="home-empate-nota">Empate entre {cant_ganadores} participantes '
             '— el pozo se reparte en partes iguales</div>'
         )
         formula_texto = f"El pozo se divide en partes iguales entre los {cant_ganadores} líderes del 1° puesto"
@@ -489,7 +472,6 @@ except Exception as e:
 if TARJETAS_INFO:
     tarjetas_html = "".join(
         f'<div class="home-info-card" style="--accent:{_ACENTOS_TARJETAS[i % len(_ACENTOS_TARJETAS)]}">'
-        f'<span class="home-info-icon">{t["icono"]}</span>'
         f'<div class="home-info-titulo">{t["titulo"]}</div>'
         f'<div class="home-info-texto">{t["texto"]}</div>'
         '</div>'
