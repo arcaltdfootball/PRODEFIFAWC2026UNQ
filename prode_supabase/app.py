@@ -37,21 +37,35 @@ except FileNotFoundError:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# AVISOS IMPORTANTES — editá esta lista para publicar avisos a los
-# jugadores. Cada elemento es un aviso distinto (agregá o quitá los que
-# quieras, no hay límite). Se renderizan como tarjetas independientes.
+# CONTENIDO EDITABLE DESDE EL PANEL ADMIN (avisos y tarjetas informativas).
+#
+# Los valores DEFAULT_* de acá abajo son solo el contenido de arranque / de
+# respaldo. Una vez que el admin guarda cambios desde el panel (sidebar,
+# contraseña más abajo), el contenido real se guarda en la tabla
+# "contenido_home" de Supabase y se lee de ahí en cada carga de la página,
+# así todos los usuarios ven siempre la última versión.
+#
+# Para que el guardado funcione hay que crear una vez esta tabla en Supabase
+# (SQL Editor → pegar y ejecutar):
+#
+#   create table if not exists contenido_home (
+#       id integer primary key,
+#       avisos jsonb not null default '[]',
+#       tarjetas jsonb not null default '[]',
+#       actualizado_en timestamptz default now()
+#   );
+#
+# Si la tabla todavía no existe, la página sigue funcionando normalmente con
+# el contenido DEFAULT_*, y el panel admin avisa el error al intentar guardar.
 # ══════════════════════════════════════════════════════════════════════════
-AVISOS_IMPORTANTES = [
+ADMIN_PASSWORD = "aleotero"
+
+DEFAULT_AVISOS = [
     "En la Boleta Digital de AGOSTO se juegan las fechas: 3 / 4 / 5 / 6 / 7.",
     "FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. Sistema de puntaje: 1 punto por acertar el resultado (Local / Empate / Visitante) · 3 puntos en total si acertás el resultado exacto.",
 ]
 
-# ══════════════════════════════════════════════════════════════════════════
-# TARJETAS INFORMATIVAS — se muestran en una grilla debajo del pozo.
-# Agregá, editá o borrá elementos de esta lista para cambiar el contenido.
-# Cada tarjeta es un diccionario con: titulo y texto.
-# ══════════════════════════════════════════════════════════════════════════
-TARJETAS_INFO = [
+DEFAULT_TARJETAS = [
     {
         "titulo": "Cómo se juega",
         "texto": "Cargá tu pronóstico antes de que arranque cada partido. "
@@ -76,6 +90,46 @@ TARJETAS_INFO = [
                  "actualizado, tus puntos y cómo te comparás con el resto.",
     },
 ]
+
+
+def _cargar_contenido_db():
+    """Trae (avisos, tarjetas) desde Supabase. Devuelve None si la tabla no
+    existe todavía, no hay fila guardada, o hay algún error de conexión."""
+    try:
+        from database import conectar
+        sb = conectar()
+        resp = sb.table("contenido_home").select("avisos, tarjetas").eq("id", 1).execute()
+        if resp.data:
+            fila = resp.data[0]
+            avisos = fila.get("avisos") or []
+            tarjetas = fila.get("tarjetas") or []
+            return avisos, tarjetas
+    except Exception:
+        pass
+    return None
+
+
+def _guardar_contenido_db(avisos, tarjetas):
+    """Guarda avisos y tarjetas en Supabase (una sola fila, id=1)."""
+    try:
+        from database import conectar
+        sb = conectar()
+        sb.table("contenido_home").upsert({
+            "id": 1,
+            "avisos": avisos,
+            "tarjetas": tarjetas,
+        }).execute()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+_contenido_db = _cargar_contenido_db()
+if _contenido_db is not None:
+    AVISOS_IMPORTANTES, TARJETAS_INFO = _contenido_db
+else:
+    AVISOS_IMPORTANTES = DEFAULT_AVISOS
+    TARJETAS_INFO = DEFAULT_TARJETAS
 
 # Colores que se van alternando en el borde superior de cada tarjeta
 # informativa, solo por variedad visual (podés agregar más si sumás cards).
@@ -492,3 +546,106 @@ if TARJETAS_INFO:
         '</div>',
         unsafe_allow_html=True,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PANEL ADMIN (barra lateral) — login con contraseña y edición de avisos
+# importantes + tarjetas informativas, en cantidad ilimitada. Los cambios se
+# guardan en Supabase (tabla "contenido_home") y quedan visibles para todos
+# los usuarios apenas se recarga la página.
+# ══════════════════════════════════════════════════════════════════════════
+with st.sidebar:
+    st.markdown("## 🔐 Panel Admin")
+
+    if "admin_logueado" not in st.session_state:
+        st.session_state.admin_logueado = False
+
+    if not st.session_state.admin_logueado:
+        _pwd_ingresada = st.text_input("Contraseña", type="password", key="admin_pwd_input")
+        if st.button("Ingresar", key="admin_login_btn"):
+            if _pwd_ingresada == ADMIN_PASSWORD:
+                st.session_state.admin_logueado = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
+    else:
+        st.success("Sesión de admin activa ✅")
+        if st.button("Cerrar sesión", key="admin_logout_btn"):
+            st.session_state.admin_logueado = False
+            st.session_state.pop("avisos_edit", None)
+            st.session_state.pop("tarjetas_edit", None)
+            st.rerun()
+
+        st.divider()
+
+        # Borradores de edición: se inicializan una sola vez por sesión a
+        # partir del contenido actual (DB o default), y desde ahí el admin
+        # los va agregando/editando/borrando libremente.
+        if "avisos_edit" not in st.session_state:
+            st.session_state.avisos_edit = list(AVISOS_IMPORTANTES)
+        if "tarjetas_edit" not in st.session_state:
+            st.session_state.tarjetas_edit = [dict(t) for t in TARJETAS_INFO]
+
+        # ── AVISOS IMPORTANTES ──────────────────────────────────────────
+        st.markdown("### 📢 Avisos importantes")
+        for i in range(len(st.session_state.avisos_edit)):
+            st.session_state.avisos_edit[i] = st.text_area(
+                f"Aviso {i + 1}",
+                value=st.session_state.avisos_edit[i],
+                key=f"aviso_txt_{i}",
+                height=80,
+            )
+            if st.button("🗑️ Eliminar este aviso", key=f"aviso_del_{i}"):
+                st.session_state.avisos_edit.pop(i)
+                st.rerun()
+        if st.button("➕ Agregar aviso", key="aviso_add_btn"):
+            st.session_state.avisos_edit.append("")
+            st.rerun()
+
+        st.divider()
+
+        # ── TARJETAS INFORMATIVAS (bloques de "Antes de arrancar") ──────
+        st.markdown("### 🗂️ Tarjetas informativas")
+        st.caption("Son los bloques que aparecen debajo de 'Antes de arrancar'. Podés agregar tantas como quieras.")
+        for i in range(len(st.session_state.tarjetas_edit)):
+            st.session_state.tarjetas_edit[i]["titulo"] = st.text_input(
+                f"Título tarjeta {i + 1}",
+                value=st.session_state.tarjetas_edit[i].get("titulo", ""),
+                key=f"tarj_tit_{i}",
+            )
+            st.session_state.tarjetas_edit[i]["texto"] = st.text_area(
+                f"Texto tarjeta {i + 1}",
+                value=st.session_state.tarjetas_edit[i].get("texto", ""),
+                key=f"tarj_txt_{i}",
+                height=100,
+            )
+            if st.button("🗑️ Eliminar esta tarjeta", key=f"tarj_del_{i}"):
+                st.session_state.tarjetas_edit.pop(i)
+                st.rerun()
+            st.markdown("---")
+        if st.button("➕ Agregar tarjeta", key="tarj_add_btn"):
+            st.session_state.tarjetas_edit.append({"titulo": "", "texto": ""})
+            st.rerun()
+
+        st.divider()
+
+        # ── GUARDAR ───────────────────────────────────────────────────
+        if st.button("💾 Guardar cambios", key="admin_save_btn", type="primary"):
+            _avisos_limpios = [a.strip() for a in st.session_state.avisos_edit if a.strip()]
+            _tarjetas_limpias = [
+                t for t in st.session_state.tarjetas_edit
+                if t.get("titulo", "").strip() or t.get("texto", "").strip()
+            ]
+            _ok, _err = _guardar_contenido_db(_avisos_limpios, _tarjetas_limpias)
+            if _ok:
+                st.success("Cambios guardados ✅ Recargando la página…")
+                st.session_state.pop("avisos_edit", None)
+                st.session_state.pop("tarjetas_edit", None)
+                st.rerun()
+            else:
+                st.error(
+                    "No se pudo guardar en la base de datos. Verificá que "
+                    "exista la tabla 'contenido_home' en Supabase (ver "
+                    "instrucciones SQL en los comentarios de app.py). "
+                    f"Detalle: {_err}"
+                )
