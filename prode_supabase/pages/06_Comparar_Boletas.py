@@ -16,8 +16,74 @@ de escudos clickeables) que 01_Resultados.py y 05_Pronosticos.py:
   - escudos de clubes  : escudos_map.url_escudo(equipo)
 """
 import streamlit as st
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from database import conectar
 from escudos_map import url_escudo
+
+TZ_ARG = ZoneInfo("America/Argentina/Buenos_Aires")
+
+# Mismos formatos aceptados que en 03_Boleta_digital.py / 05_Pronosticos.py,
+# para bancar cómo sea que esté cargado el dato en la base (texto libre,
+# date/time de Postgres, etc.)
+_FORMATOS_FECHA = [
+    "%Y-%m-%d",
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%Y/%m/%d",
+    "%d/%m/%y",
+]
+_FORMATOS_HORA = [
+    "%H:%M:%S",
+    "%H:%M",
+    "%H.%M",
+    "%Hhs",
+    "%H",
+]
+
+
+def _parsear_fecha(fecha_raw):
+    if not fecha_raw:
+        return None
+    fecha_str = str(fecha_raw).strip().split("T")[0].split(" ")[0]
+    for fmt in _FORMATOS_FECHA:
+        try:
+            return datetime.strptime(fecha_str, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parsear_hora(hora_raw):
+    if not hora_raw:
+        return None
+    hora_str = str(hora_raw).strip()
+    for fmt in _FORMATOS_HORA:
+        try:
+            return datetime.strptime(hora_str, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+def _partido_comenzo(fecha_partido, hora) -> bool:
+    """
+    True si, con la fecha/hora cargada del partido (hora de Argentina), ya
+    llegó o pasó el horario de inicio.
+
+    Si no hay fecha/hora cargada, o no se pudo interpretar, se considera
+    que TODAVÍA NO comenzó (por seguridad: mejor tapar los pronósticos de
+    más que destaparlos antes de tiempo por un dato faltante o mal
+    cargado). Así ningún jugador puede ver el pronóstico del otro antes de
+    que arranque el partido.
+    """
+    fecha_obj = _parsear_fecha(fecha_partido)
+    hora_obj = _parsear_hora(hora)
+    if fecha_obj is None or hora_obj is None:
+        return False
+    kickoff = datetime.combine(fecha_obj, hora_obj, tzinfo=TZ_ARG)
+    return datetime.now(TZ_ARG) >= kickoff
+
 
 st.set_page_config(
     page_title="Comparar Boletas",
@@ -249,6 +315,30 @@ st.markdown(
         color: rgba(255,255,255,0.35); letter-spacing: 1px;
     }
 
+    /* PRONÓSTICOS BLOQUEADOS (hasta que arranca el partido, idéntico a
+       05_Pronosticos.py) */
+    .pron-bloqueado {
+        text-align: center;
+        background: rgba(255,255,255,0.03);
+        border: 1px dashed rgba(255,255,255,0.14);
+        border-radius: 16px;
+        padding: 22px 16px 20px;
+        margin-bottom: 4px;
+    }
+    .pron-bloqueado .candado {
+        font-size: 1.8rem; margin-bottom: 6px; opacity: 0.85;
+    }
+    .pron-bloqueado .titulo {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.05rem; letter-spacing: 1.5px;
+        color: #e2e8f0; margin-bottom: 4px;
+    }
+    .pron-bloqueado .subtitulo {
+        font-size: 0.75rem; color: #64748b;
+        letter-spacing: 0.3px; line-height: 1.4;
+        max-width: 360px; margin: 0 auto;
+    }
+
     [data-testid="stHeader"] { background: transparent; }
     .block-container { padding-top: 2rem; }
 
@@ -441,7 +531,7 @@ with col_b:
         key="cmp_jug_2",
     )
 
-comparar = st.button("Comparar boletas", use_container_width=True, type="primary")
+comparar = st.button("⚔️ Comparar boletas", use_container_width=True, type="primary")
 
 if "cmp_activo" not in st.session_state:
     st.session_state["cmp_activo"] = False
@@ -488,7 +578,17 @@ def render_resumen(exacto, resultado, difieren, sin_comparar):
 # ── Helper: build_card_partido ────────────────────────────────────────────────
 def build_card_partido(local, visitante, fecha_partido, hora, estadio, resultado,
                        gl_of, gv_of, v1, gl1, gv1, v2, gl2, gv2,
-                       n1_sel, n2_sel):
+                       n1_sel, n2_sel, revelado: bool = True):
+    # ══════════════════════════════════════════════════════════════════════
+    # CANDADO: hasta que el partido no arrancó (o ya se jugó, que implica
+    # que arrancó), NO comparamos ni mostramos los pronósticos de cada
+    # jugador — así ninguno de los dos puede espiar ni copiarse del otro
+    # antes de tiempo. `revelado` ya viene resuelto por quien llama a esta
+    # función usando la hora real de Argentina (ver _partido_comenzo).
+    # ══════════════════════════════════════════════════════════════════════
+    if not revelado:
+        v1 = v2 = gl1 = gv1 = gl2 = gv2 = None
+
     if v1 is not None and v2 is not None and v1 == v2:
         marcador_igual = (
             gl1 is not None and gv1 is not None
@@ -558,6 +658,27 @@ def build_card_partido(local, visitante, fecha_partido, hora, estadio, resultado
             return marcador_str + f'<div class="comp-pill op2">2</div><div class="comp-sub">Gana {visitante}</div>'
         return '<div class="comp-pill opn">—</div><div class="comp-sub">Sin pronóstico</div>'
 
+    if revelado:
+        bloque_comparacion = (
+            (f'<div class="badge-match">{badge_match}</div>' if badge_match else "")
+            + '<div class="comp-wrap">'
+            + f'<div class="comp-col"><div class="comp-col-nombre">{n1_sel}</div>{pill_html(v1, gl1, gv1)}</div>'
+            + f'<div class="comp-col"><div class="comp-col-nombre">{n2_sel}</div>{pill_html(v2, gl2, gv2)}</div>'
+            + "</div>"
+        )
+    else:
+        # Partido todavía no arrancó: tapamos las boletas de ambos
+        # jugadores para que ninguno pueda copiarse del otro.
+        bloque_comparacion = (
+            '<div class="pron-bloqueado">'
+            + '<div class="candado">🔒</div>'
+            + '<div class="titulo">Boletas ocultas</div>'
+            + '<div class="subtitulo">La comparación entre '
+            f'{n1_sel} y {n2_sel} se va a revelar automáticamente apenas '
+            'arranque el partido, para que ninguno pueda copiarse del otro.</div>'
+            + '</div>'
+        )
+
     return (
         f'<div class="partido-card comp-card {estado_clase}">'
         + (f'<div class="match-meta">{meta_str}</div>' if meta_str else "")
@@ -568,11 +689,8 @@ def build_card_partido(local, visitante, fecha_partido, hora, estadio, resultado
         + "</div>"
         + res_html
         + '<hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:0 0 12px;">'
-        + (f'<div class="badge-match">{badge_match}</div>' if badge_match else "")
-        + '<div class="comp-wrap">'
-        + f'<div class="comp-col"><div class="comp-col-nombre">{n1_sel}</div>{pill_html(v1, gl1, gv1)}</div>'
-        + f'<div class="comp-col"><div class="comp-col-nombre">{n2_sel}</div>{pill_html(v2, gl2, gv2)}</div>'
-        + "</div></div>"
+        + bloque_comparacion
+        + "</div>"
     )
 
 
@@ -612,9 +730,19 @@ if st.session_state.get("cmp_activo"):
     )
 
     # ── Resumen general (sobre TODOS los partidos, todas las zonas) ──────────
+    # Mismo candado que en la card de cada partido: mientras el partido no
+    # arrancó, no se compara (ni se filtra información de) la boleta de
+    # ninguno de los dos jugadores.
     coinciden_exacto_n = coinciden_resultado_n = difieren_n = sin_comparar_n = 0
     for p in partidos_raw:
         pid_str = str(p["id"])
+        gl_p = p.get("goles_local")
+        gv_p = p.get("goles_visitante")
+        ya_jugado_p = gl_p is not None and gv_p is not None
+        if not (ya_jugado_p or _partido_comenzo(p.get("fecha_partido"), p.get("hora"))):
+            sin_comparar_n += 1
+            continue
+
         apuestas = pron_por_partido.get(pid_str, {})
         d1 = apuestas.get(id1)
         d2 = apuestas.get(id2)
@@ -853,6 +981,9 @@ if st.session_state.get("cmp_activo"):
             pron1 = apuestas.get(id1)
             pron2 = apuestas.get(id2)
 
+            ya_jugado = gl_of is not None and gv_of is not None
+            revelado = ya_jugado or _partido_comenzo(fecha_part, hora)
+
             card = build_card_partido(
                 local, visitante, fecha_part, hora, estadio,
                 resultado_of, gl_of, gv_of,
@@ -863,6 +994,7 @@ if st.session_state.get("cmp_activo"):
                 pron2["goles_local"]     if pron2 else None,
                 pron2["goles_visitante"] if pron2 else None,
                 n1_sel, n2_sel,
+                revelado=revelado,
             )
             st.markdown(card, unsafe_allow_html=True)
 
