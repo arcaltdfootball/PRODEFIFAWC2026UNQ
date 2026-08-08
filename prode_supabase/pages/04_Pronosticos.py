@@ -14,8 +14,74 @@ Usa el MISMO esquema de datos que 01_Resultados.py y 03_Fixture.py:
   - escudos de clubes  : escudos_map.url_escudo(equipo)
 """
 import streamlit as st
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from database import conectar
 from escudos_map import url_escudo
+
+TZ_ARG = ZoneInfo("America/Argentina/Buenos_Aires")
+
+# Mismos formatos aceptados que en 03_Boleta_digital.py, para bancar cómo
+# sea que esté cargado el dato en la base (texto libre, date/time de
+# Postgres, etc.)
+_FORMATOS_FECHA = [
+    "%Y-%m-%d",
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%Y/%m/%d",
+    "%d/%m/%y",
+]
+_FORMATOS_HORA = [
+    "%H:%M:%S",
+    "%H:%M",
+    "%H.%M",
+    "%Hhs",
+    "%H",
+]
+
+
+def _parsear_fecha(fecha_raw):
+    if not fecha_raw:
+        return None
+    fecha_str = str(fecha_raw).strip().split("T")[0].split(" ")[0]
+    for fmt in _FORMATOS_FECHA:
+        try:
+            return datetime.strptime(fecha_str, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parsear_hora(hora_raw):
+    if not hora_raw:
+        return None
+    hora_str = str(hora_raw).strip()
+    for fmt in _FORMATOS_HORA:
+        try:
+            return datetime.strptime(hora_str, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+def _partido_comenzo(fecha_partido, hora) -> bool:
+    """
+    True si, con la fecha/hora cargada del partido (hora de Argentina), ya
+    llegó o pasó el horario de inicio.
+
+    Si no hay fecha/hora cargada, o no se pudo interpretar, se considera
+    que TODAVÍA NO comenzó (por seguridad: mejor tapar los pronósticos de
+    más que destaparlos antes de tiempo por un dato faltante o mal
+    cargado). Así nadie puede ver ni copiar el pronóstico de otro
+    participante antes de que arranque el partido.
+    """
+    fecha_obj = _parsear_fecha(fecha_partido)
+    hora_obj = _parsear_hora(hora)
+    if fecha_obj is None or hora_obj is None:
+        return False
+    kickoff = datetime.combine(fecha_obj, hora_obj, tzinfo=TZ_ARG)
+    return datetime.now(TZ_ARG) >= kickoff
+
 
 st.set_page_config(
     page_title="Pronósticos por Partido",
@@ -198,6 +264,29 @@ st.markdown(
     .sin-apuestas {
         text-align: center; color: #475569; font-size: 0.8rem;
         padding: 8px 0 4px; letter-spacing: 0.5px;
+    }
+
+    /* PRONÓSTICOS BLOQUEADOS (hasta que arranca el partido) */
+    .pron-bloqueado {
+        text-align: center;
+        background: rgba(255,255,255,0.03);
+        border: 1px dashed rgba(255,255,255,0.14);
+        border-radius: 16px;
+        padding: 22px 16px 20px;
+        margin-bottom: 4px;
+    }
+    .pron-bloqueado .candado {
+        font-size: 1.8rem; margin-bottom: 6px; opacity: 0.85;
+    }
+    .pron-bloqueado .titulo {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.05rem; letter-spacing: 1.5px;
+        color: #e2e8f0; margin-bottom: 4px;
+    }
+    .pron-bloqueado .subtitulo {
+        font-size: 0.75rem; color: #64748b;
+        letter-spacing: 0.3px; line-height: 1.4;
+        max-width: 360px; margin: 0 auto;
     }
 
     /* ZONA LABEL */
@@ -406,14 +495,23 @@ def chips_html(nombres_dict, cls, marcadores=None, acierto_map=None):
 
 # ── Helper: render card de partido ───────────────────────────────────────────────
 def render_card_partido(local, visitante, fecha_partido, hora, estadio,
-                         gl_real, gv_real, apuestas_dict):
+                         gl_real, gv_real, apuestas_dict, comenzo: bool):
+    ya_jugado = gl_real is not None and gv_real is not None
+
+    # ══════════════════════════════════════════════════════════════════════
+    # CANDADO: hasta que el partido no arrancó (o ya se jugó, que implica
+    # que arrancó), NO calculamos ni mostramos nada de quién apostó a qué
+    # — así nadie puede espiar ni copiar el pronóstico de otro participante
+    # antes de tiempo. `comenzo` ya viene resuelto por quien llama a esta
+    # función usando la hora real de Argentina (ver _partido_comenzo).
+    # ══════════════════════════════════════════════════════════════════════
+    revelado = comenzo or ya_jugado
+
     votos_1 = {}
     votos_X = {}
     votos_2 = {}
     marcador_de = {}
     acierto_de = {}
-
-    ya_jugado = gl_real is not None and gv_real is not None
     signo_real = None
     if ya_jugado:
         if gl_real > gv_real:
@@ -423,25 +521,26 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
         else:
             signo_real = "2"
 
-    for uid, pr in apuestas_dict.items():
-        signo = pr.get("signo_pred")
-        if signo not in ("1", "X", "2"):
-            continue
-        gl_p = pr.get("goles_local_pred")
-        gv_p = pr.get("goles_visitante_pred")
-        sin_marc = bool(pr.get("sin_marcador"))
-        if gl_p is not None and gv_p is not None and not sin_marc:
-            marcador_de[uid] = f"{gl_p}-{gv_p}"
-            if ya_jugado:
-                acierto_de[uid] = (gl_p == gl_real and gv_p == gv_real) or (signo == signo_real)
+    if revelado:
+        for uid, pr in apuestas_dict.items():
+            signo = pr.get("signo_pred")
+            if signo not in ("1", "X", "2"):
+                continue
+            gl_p = pr.get("goles_local_pred")
+            gv_p = pr.get("goles_visitante_pred")
+            sin_marc = bool(pr.get("sin_marcador"))
+            if gl_p is not None and gv_p is not None and not sin_marc:
+                marcador_de[uid] = f"{gl_p}-{gv_p}"
+                if ya_jugado:
+                    acierto_de[uid] = (gl_p == gl_real and gv_p == gv_real) or (signo == signo_real)
 
-        nombre_j = jugador_nombre.get(uid, f"#{uid}")
-        if signo == "1":
-            votos_1[uid] = nombre_j
-        elif signo == "X":
-            votos_X[uid] = nombre_j
-        else:
-            votos_2[uid] = nombre_j
+            nombre_j = jugador_nombre.get(uid, f"#{uid}")
+            if signo == "1":
+                votos_1[uid] = nombre_j
+            elif signo == "X":
+                votos_X[uid] = nombre_j
+            else:
+                votos_2[uid] = nombre_j
 
     con_pronostico = set(apuestas_dict.keys())
     sin_voto = {
@@ -486,7 +585,7 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
         meta_parts.append(f'<i class="ti ti-map-pin"></i> {estadio}')
     meta_str = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(meta_parts)
 
-    card_html = (
+    card_head = (
         '<div class="partido-card">'
         + (f'<div class="match-meta">{meta_str}</div>' if meta_str else "")
         + '<div class="teams-row">'
@@ -496,40 +595,59 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
         + "</div>"
         + res_html
         + '<hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:0 0 14px;">'
-        + '<div class="conteo-titulo">¿Quién apostó a qué?</div>'
-        + '<div class="barra-wrap">'
-        + '<div class="barra-opcion op1">'
-        + '<div class="barra-label">1</div>'
-        + f'<div class="barra-sublabel">Gana {local}</div>'
-        + f'<div class="barra-count">{n1}</div>'
-        + f'<div class="barra-pct">{pct(n1)}</div>'
-        + chips_html(votos_1, "c1", marcador_de, acierto_de)
-        + "</div>"
-        + '<div class="barra-opcion opX">'
-        + '<div class="barra-label">X</div>'
-        + '<div class="barra-sublabel">Empate</div>'
-        + f'<div class="barra-count">{nX}</div>'
-        + f'<div class="barra-pct">{pct(nX)}</div>'
-        + chips_html(votos_X, "cX", marcador_de, acierto_de)
-        + "</div>"
-        + '<div class="barra-opcion op2">'
-        + '<div class="barra-label">2</div>'
-        + f'<div class="barra-sublabel">Gana {visitante}</div>'
-        + f'<div class="barra-count">{n2}</div>'
-        + f'<div class="barra-pct">{pct(n2)}</div>'
-        + chips_html(votos_2, "c2", marcador_de, acierto_de)
-        + "</div>"
-        + "</div>"
     )
-    if sin_voto:
-        card_html += (
-            '<div style="margin-top:6px;">'
-            '<div class="barra-sublabel" style="text-align:center;margin-bottom:5px;">'
-            f"Sin pronóstico ({n_sin})</div>"
-            + chips_html(sin_voto, "cn")
+
+    if revelado:
+        bloque_pronosticos = (
+            '<div class="conteo-titulo">¿Quién apostó a qué?</div>'
+            + '<div class="barra-wrap">'
+            + '<div class="barra-opcion op1">'
+            + '<div class="barra-label">1</div>'
+            + f'<div class="barra-sublabel">Gana {local}</div>'
+            + f'<div class="barra-count">{n1}</div>'
+            + f'<div class="barra-pct">{pct(n1)}</div>'
+            + chips_html(votos_1, "c1", marcador_de, acierto_de)
+            + "</div>"
+            + '<div class="barra-opcion opX">'
+            + '<div class="barra-label">X</div>'
+            + '<div class="barra-sublabel">Empate</div>'
+            + f'<div class="barra-count">{nX}</div>'
+            + f'<div class="barra-pct">{pct(nX)}</div>'
+            + chips_html(votos_X, "cX", marcador_de, acierto_de)
+            + "</div>"
+            + '<div class="barra-opcion op2">'
+            + '<div class="barra-label">2</div>'
+            + f'<div class="barra-sublabel">Gana {visitante}</div>'
+            + f'<div class="barra-count">{n2}</div>'
+            + f'<div class="barra-pct">{pct(n2)}</div>'
+            + chips_html(votos_2, "c2", marcador_de, acierto_de)
+            + "</div>"
             + "</div>"
         )
-    card_html += "</div>"
+        if sin_voto:
+            bloque_pronosticos += (
+                '<div style="margin-top:6px;">'
+                '<div class="barra-sublabel" style="text-align:center;margin-bottom:5px;">'
+                f"Sin pronóstico ({n_sin})</div>"
+                + chips_html(sin_voto, "cn")
+                + "</div>"
+            )
+    else:
+        # Partido todavía no arrancó: tapamos todo el desglose (quién
+        # apostó a qué, marcadores, cantidades, porcentajes, quién falta)
+        # para que nadie pueda espiar ni copiar el pronóstico de otro
+        # participante antes de que empiece el partido.
+        bloque_pronosticos = (
+            '<div class="pron-bloqueado">'
+            '<div class="candado">🔒</div>'
+            '<div class="titulo">Pronósticos ocultos</div>'
+            '<div class="subtitulo">Se van a revelar automáticamente apenas '
+            'arranque el partido, para que nadie pueda copiarse de otro '
+            'participante.</div>'
+            '</div>'
+        )
+
+    card_html = card_head + bloque_pronosticos + "</div>"
     st.markdown(card_html, unsafe_allow_html=True)
 
 
@@ -784,6 +902,7 @@ for tab, zona in zip(tabs_zona, zonas_lista):
             local, visitante, fecha_part, hora, estadio,
             gl_real, gv_real,
             pron_por_partido.get(str(p_id), {}),
+            comenzo=_partido_comenzo(fecha_part, hora),
         )
 
         render_dots(idx, total)
