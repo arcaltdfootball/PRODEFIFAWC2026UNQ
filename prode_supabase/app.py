@@ -1,10 +1,16 @@
 import base64
+import os
 
 import streamlit as st
 
+# Directorio donde vive este script (la raíz del repo). Usar rutas absolutas
+# basadas en __file__ evita que las imágenes "desaparezcan" cuando Streamlit
+# se ejecuta con un directorio de trabajo distinto al del repo.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 st.set_page_config(
     page_title="PRODE FUTBOL ARGENTINO 2026",
-    page_icon="icon2026fwc.png",
+    page_icon=os.path.join(BASE_DIR, "icon2026fwc.png"),
     layout="wide"
 )
 
@@ -13,21 +19,21 @@ st.set_page_config(
 # en el código). Para cambiarlos: subí al repositorio un archivo con el
 # mismo nombre reemplazando el actual y listo, no hace falta tocar nada más.
 # ══════════════════════════════════════════════════════════════════════════
-BG_IMAGE_PATH = "AFA2026.png"
+BG_IMAGE_PATH = os.path.join(BASE_DIR, "AFA2026.png")
 try:
     with open(BG_IMAGE_PATH, "rb") as _f:
         BG_IMAGE_BASE64 = base64.b64encode(_f.read()).decode()
 except FileNotFoundError:
     BG_IMAGE_BASE64 = ""
-    st.warning(f"⚠️ No se encontró la imagen de fondo en la ruta '{BG_IMAGE_PATH}'. Verificá que el archivo esté en la raíz del repo.")
+    st.warning(f"⚠️ No se encontró la imagen de fondo en la ruta '{BG_IMAGE_PATH}'. Verificá que el archivo 'AFA2026.png' esté en la raíz del repo, junto a app.py.")
 
-LOGO_PATH = "LOGO.png"
+LOGO_PATH = os.path.join(BASE_DIR, "LOGO.png")
 try:
     with open(LOGO_PATH, "rb") as _f:
         LOGO_BASE64 = base64.b64encode(_f.read()).decode()
 except FileNotFoundError:
     LOGO_BASE64 = ""
-    st.warning(f"⚠️ No se encontró el logo en la ruta '{LOGO_PATH}'. Verificá que el archivo esté en la raíz del repo.")
+    st.warning(f"⚠️ No se encontró el logo en la ruta '{LOGO_PATH}'. Verificá que el archivo 'LOGO.png' esté en la raíz del repo, junto a app.py.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
