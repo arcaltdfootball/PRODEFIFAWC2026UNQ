@@ -521,11 +521,24 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
         else:
             signo_real = "2"
 
-    if revelado:
-        for uid, pr in apuestas_dict.items():
-            signo = pr.get("signo_pred")
-            if signo not in ("1", "X", "2"):
-                continue
+    # El CONTEO (cuántos apostaron a 1/X/2) se calcula siempre, esté o no
+    # revelado el partido: no expone quién apostó qué, sólo cuántos, así
+    # que no hay riesgo de que alguien se copie. Los NOMBRES (votos_1,
+    # votos_X, votos_2, marcadores, aciertos) sólo se completan cuando
+    # `revelado` es True.
+    n1 = n2 = nX = 0
+    for uid, pr in apuestas_dict.items():
+        signo = pr.get("signo_pred")
+        if signo not in ("1", "X", "2"):
+            continue
+        if signo == "1":
+            n1 += 1
+        elif signo == "X":
+            nX += 1
+        else:
+            n2 += 1
+
+        if revelado:
             gl_p = pr.get("goles_local_pred")
             gv_p = pr.get("goles_visitante_pred")
             sin_marc = bool(pr.get("sin_marcador"))
@@ -550,9 +563,6 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
         or apuestas_dict.get(str(j["id"]), {}).get("signo_pred") not in ("1", "X", "2")
     }
 
-    n1 = len(votos_1)
-    nX = len(votos_X)
-    n2 = len(votos_2)
     n_sin = len(sin_voto)
     total_con_voto = n1 + nX + n2
 
@@ -633,18 +643,44 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
                 + "</div>"
             )
     else:
-        # Partido todavía no arrancó: tapamos todo el desglose (quién
-        # apostó a qué, marcadores, cantidades, porcentajes, quién falta)
-        # para que nadie pueda espiar ni copiar el pronóstico de otro
-        # participante antes de que empiece el partido.
+        # Partido todavía no arrancó: tapamos quién apostó a qué (nombres,
+        # marcadores) para que nadie pueda copiarse de otro participante,
+        # pero sí mostramos la cantidad y el porcentaje por opción — eso
+        # no permite identificar a nadie.
         bloque_pronosticos = (
-            '<div class="pron-bloqueado">'
-            '<div class="candado">🔒</div>'
-            '<div class="titulo">Pronósticos ocultos</div>'
-            '<div class="subtitulo">Se van a revelar automáticamente apenas '
-            'arranque el partido, para que nadie pueda copiarse de otro '
-            'participante.</div>'
-            '</div>'
+            '<div class="conteo-titulo">¿Cómo vienen los pronósticos?</div>'
+            + '<div class="barra-wrap">'
+            + '<div class="barra-opcion op1">'
+            + '<div class="barra-label">1</div>'
+            + f'<div class="barra-sublabel">Gana {local}</div>'
+            + f'<div class="barra-count">{n1}</div>'
+            + f'<div class="barra-pct">{pct(n1)}</div>'
+            + "</div>"
+            + '<div class="barra-opcion opX">'
+            + '<div class="barra-label">X</div>'
+            + '<div class="barra-sublabel">Empate</div>'
+            + f'<div class="barra-count">{nX}</div>'
+            + f'<div class="barra-pct">{pct(nX)}</div>'
+            + "</div>"
+            + '<div class="barra-opcion op2">'
+            + '<div class="barra-label">2</div>'
+            + f'<div class="barra-sublabel">Gana {visitante}</div>'
+            + f'<div class="barra-count">{n2}</div>'
+            + f'<div class="barra-pct">{pct(n2)}</div>'
+            + "</div>"
+            + "</div>"
+            + (
+                f'<div class="barra-sublabel" style="text-align:center;margin-bottom:10px;">'
+                f"Sin pronóstico ({n_sin})</div>"
+                if n_sin else ""
+            )
+            + '<div class="pron-bloqueado">'
+            + '<div class="candado">🔒</div>'
+            + '<div class="titulo">Nombres ocultos</div>'
+            + '<div class="subtitulo">Quién apostó a qué se va a revelar '
+            'automáticamente apenas arranque el partido, para que nadie '
+            'pueda copiarse de otro participante.</div>'
+            + '</div>'
         )
 
     card_html = card_head + bloque_pronosticos + "</div>"
