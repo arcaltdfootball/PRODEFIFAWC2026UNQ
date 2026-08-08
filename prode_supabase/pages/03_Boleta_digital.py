@@ -43,7 +43,6 @@ import json
 import os
 import secrets
 import string
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -428,63 +427,6 @@ def _pronostico_cerrado(p) -> bool:
     return ahora >= cierre
 
 
-def _segundos_hasta_proximo_refresco(partidos):
-    """
-    Calcula cuántos segundos hay que esperar antes de refrescar la página
-    sola, para que apenas se cumpla el horario de cierre de algún partido
-    (fecha/hora confirmada, todavía no jugado, todavía no cerrado) el
-    pronóstico se bloquee sin que el usuario tenga que hacer nada.
-
-    Devuelve None si no hay ningún cierre pendiente (nada que esperar).
-
-    IMPORTANTE (rendimiento): antes esto recargaba la página COMPLETA cada
-    20 segundos como máximo, sin importar si el próximo cierre estaba en 3
-    minutos o en 3 días — o sea que, durante todo el torneo, cada jugador
-    conectado le generaba al servidor una recarga total cada 20 segundos,
-    todo el tiempo. Eso es lo que hacía sentir lenta a la app en general
-    (no solo el chequeo de horario en sí, sino la catarata de recargas
-    de fondo compitiendo con los clicks reales de la gente).
-
-    Ahora el intervalo de chequeo se ajusta según qué tan cerca esté el
-    próximo cierre: bien seguido solo cuando realmente está por cerrarse
-    algo (para que el bloqueo siga siendo preciso al segundo), y muy
-    espaciado el resto del tiempo (que es la gran mayoría).
-    """
-    ahora = datetime.now(TZ_ARG)
-    proximos_cierres = []
-    for p in partidos:
-        ya_jugado_p = p.get("goles_local") is not None and p.get("goles_visitante") is not None
-        if ya_jugado_p:
-            continue
-        cierre, _error = _momento_cierre(p)
-        if cierre is not None and cierre > ahora:
-            proximos_cierres.append(cierre)
-
-    if not proximos_cierres:
-        return None
-
-    segundos_hasta_cierre = (min(proximos_cierres) - ahora).total_seconds()
-
-    # Intervalo de chequeo según qué tan cerca esté el próximo cierre:
-    #   ≤90s   -> cada 15s  (justo antes de cerrar, precisión alta)
-    #   ≤10min -> cada 60s
-    #   ≤1h    -> cada 5 min
-    #   más lejos -> cada 15 min (alcanza y sobra, y ahorra muchísima carga)
-    if segundos_hasta_cierre <= 90:
-        intervalo_max = 15
-    elif segundos_hasta_cierre <= 600:
-        intervalo_max = 60
-    elif segundos_hasta_cierre <= 3600:
-        intervalo_max = 300
-    else:
-        intervalo_max = 900
-
-    # Esperamos exactamente hasta el próximo cierre si falta poco; si falta
-    # mucho, esperamos como máximo `intervalo_max` y volvemos a chequear
-    # (así no hace falta un timer exacto por cada partido).
-    return max(1.0, min(segundos_hasta_cierre + 1, intervalo_max))
-
-
 def _signo_a_texto(signo):
     """Convierte 1/X/2 a texto descriptivo."""
     return {"1": "Local (1)", "X": "Empate (X)", "2": "Visitante (2)"}.get(signo, signo or "—")
@@ -854,7 +796,7 @@ def mostrar_boleta(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool,
     _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable, key_ns)
 
 
-@st.fragment
+@st.fragment(run_every=20)
 def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, editable: bool, key_ns: str):
     """
     Todo el cuerpo de la boleta corre como un @st.fragment: al elegir un
@@ -863,6 +805,18 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
     el CSS, la conexión a la base, el sidebar, ni las otras pestañas), así
     que cada acción del jugador se siente instantánea en vez de recargar
     todo de nuevo cada vez.
+
+    `run_every=20`: además, este fragmento se vuelve a evaluar solo, cada
+    20 segundos, para que el bloqueo de un partido por horario se refleje
+    en pantalla sin que el jugador tenga que hacer nada — pero a diferencia
+    del mecanismo viejo (que recargaba la página ENTERA con un
+    time.sleep()+st.rerun() bloqueante), esto lo maneja Streamlit de forma
+    liviana y no bloqueante, sin el "se pone lento y hay que apretar STOP"
+    que generaba la recarga completa de antes. Ya no es la única barrera de
+    seguridad (eso ahora se valida siempre en el momento de guardar, más
+    abajo), así que si por lo que sea tarda un toque en reflejarse en
+    pantalla no hay ningún riesgo: no se puede guardar nada fuera de horario
+    de todas formas.
     """
     por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
 
@@ -1478,23 +1432,17 @@ if not st.session_state.es_admin:
         editable=True,
         key_ns="propia",
     )
-    # Auto-refresh: si hay algún partido con horario confirmado a punto de
-    # cerrarse (o de cerrarse más adelante), esperamos y refrescamos solos
-    # para que el pronóstico se bloquee apenas llegue el momento, sin que
-    # el jugador tenga que recargar la página a mano.
-    _espera = _segundos_hasta_proximo_refresco(partidos_db)
+    # El chequeo de cierre por horario ahora vive DENTRO del fragmento de la
+    # boleta (se re-evalúa solo cada 20s, sin recargar la página completa;
+    # ver el run_every en @st.fragment de _mostrar_boleta_fragment más
+    # arriba), y la seguridad real está garantizada en el momento de guardar
+    # (guardar_pronostico), no acá. Por eso ya no hace falta ningún
+    # time.sleep()+st.rerun() bloqueante en este punto: eso era justamente
+    # lo que generaba esos parpadeos de "recargando" que obligaban a
+    # apretar STOP en el navegador para poder seguir usando la app con
+    # normalidad.
     with st.sidebar:
-        if _espera is not None:
-            st.caption(
-                f"🔄 Auto-chequeo de cierre activo · "
-                f"último chequeo: {datetime.now(TZ_ARG).strftime('%H:%M:%S')} (ARG) · "
-                f"próximo en ~{int(_espera)}s"
-            )
-        else:
-            st.caption("✅ No hay cierres pendientes por ahora.")
-    if _espera is not None:
-        time.sleep(_espera)
-        st.rerun()
+        st.caption("🔒 Cierre automático de pronósticos por horario: activo.")
     st.stop()
 
 
