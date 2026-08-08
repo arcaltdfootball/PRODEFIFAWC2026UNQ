@@ -55,8 +55,20 @@ except FileNotFoundError:
 #       actualizado_en timestamptz default now()
 #   );
 #
+#   -- Importante: si tu proyecto tiene RLS (Row Level Security) activado
+#   -- por defecto para tablas nuevas, hay que permitir lectura/escritura.
+#   -- Opción simple (si esta tabla no tiene datos sensibles):
+#   alter table contenido_home disable row level security;
+#
+#   -- Opción más estricta (si preferís dejar RLS activado):
+#   -- alter table contenido_home enable row level security;
+#   -- create policy "lectura publica" on contenido_home for select using (true);
+#   -- create policy "escritura publica" on contenido_home for all using (true) with check (true);
+#
 # Si la tabla todavía no existe, la página sigue funcionando normalmente con
 # el contenido DEFAULT_*, y el panel admin avisa el error al intentar guardar.
+# Usá el botón "🔍 Diagnosticar conexión" del panel admin para ver exactamente
+# en qué paso falla si el guardado sigue sin funcionar.
 # ══════════════════════════════════════════════════════════════════════════
 ADMIN_PASSWORD = "aleotero"
 
@@ -121,7 +133,52 @@ def _guardar_contenido_db(avisos, tarjetas):
         }).execute()
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, f"{type(e).__name__}: {e}"
+
+
+def _diagnosticar_conexion():
+    """Corre paso a paso la conexión a Supabase y la tabla contenido_home,
+    para poder ver exactamente en qué punto falla el guardado."""
+    pasos = []
+
+    try:
+        from database import conectar
+        pasos.append(("Importar database.conectar()", True, ""))
+    except Exception as e:
+        pasos.append(("Importar database.conectar()", False, f"{type(e).__name__}: {e}"))
+        return pasos
+
+    try:
+        sb = conectar()
+        pasos.append(("Conectar a Supabase", True, ""))
+    except Exception as e:
+        pasos.append(("Conectar a Supabase", False, f"{type(e).__name__}: {e}"))
+        return pasos
+
+    try:
+        sb.table("contenido_home").select("id").limit(1).execute()
+        pasos.append(("Leer la tabla 'contenido_home'", True, ""))
+    except Exception as e:
+        pasos.append((
+            "Leer la tabla 'contenido_home'", False,
+            f"{type(e).__name__}: {e}  →  probablemente la tabla todavía no existe en Supabase."
+        ))
+        return pasos
+
+    try:
+        # Escribe y borra una fila de prueba (id=999999) para no tocar el
+        # contenido real guardado en id=1.
+        sb.table("contenido_home").upsert({"id": 999999, "avisos": [], "tarjetas": []}).execute()
+        sb.table("contenido_home").delete().eq("id", 999999).execute()
+        pasos.append(("Escribir en la tabla 'contenido_home'", True, ""))
+    except Exception as e:
+        pasos.append((
+            "Escribir en la tabla 'contenido_home'", False,
+            f"{type(e).__name__}: {e}  →  probablemente falta un permiso (RLS) en Supabase."
+        ))
+        return pasos
+
+    return pasos
 
 
 _contenido_db = _cargar_contenido_db()
@@ -132,8 +189,10 @@ else:
     TARJETAS_INFO = DEFAULT_TARJETAS
 
 # Colores que se van alternando en el borde superior de cada tarjeta
-# informativa, solo por variedad visual (podés agregar más si sumás cards).
+# informativa cuando el admin todavía no eligió un color propio para esa
+# tarjeta. El admin puede sobrescribir el color de cada card desde el panel.
 _ACENTOS_TARJETAS = ["var(--home-gold)", "var(--home-violet)", "var(--home-mint)", "#FF8A65"]
+_ACENTOS_TARJETAS_HEX = ["#E8C96B", "#A78BFA", "#4ADE80", "#FF8A65"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -533,7 +592,7 @@ except Exception as e:
 # ══════════════════════════════════════════════════════════════════════════
 if TARJETAS_INFO:
     tarjetas_html = "".join(
-        f'<div class="home-info-card" style="--accent:{_ACENTOS_TARJETAS[i % len(_ACENTOS_TARJETAS)]}">'
+        f'<div class="home-info-card" style="--accent:{t.get("color") or _ACENTOS_TARJETAS[i % len(_ACENTOS_TARJETAS)]}">'
         f'<div class="home-info-titulo">{t["titulo"]}</div>'
         f'<div class="home-info-texto">{t["texto"]}</div>'
         '</div>'
@@ -606,7 +665,7 @@ with st.sidebar:
 
         # ── TARJETAS INFORMATIVAS (bloques de "Antes de arrancar") ──────
         st.markdown("### 🗂️ Tarjetas informativas")
-        st.caption("Son los bloques que aparecen debajo de 'Antes de arrancar'. Podés agregar tantas como quieras.")
+        st.caption("Son los bloques que aparecen debajo de 'Antes de arrancar'. Podés agregar tantas como quieras y elegir el color del borde de cada una.")
         for i in range(len(st.session_state.tarjetas_edit)):
             st.session_state.tarjetas_edit[i]["titulo"] = st.text_input(
                 f"Título tarjeta {i + 1}",
@@ -619,12 +678,21 @@ with st.sidebar:
                 key=f"tarj_txt_{i}",
                 height=100,
             )
+            _color_actual = (
+                st.session_state.tarjetas_edit[i].get("color")
+                or _ACENTOS_TARJETAS_HEX[i % len(_ACENTOS_TARJETAS_HEX)]
+            )
+            st.session_state.tarjetas_edit[i]["color"] = st.color_picker(
+                f"Color del borde — tarjeta {i + 1}",
+                value=_color_actual,
+                key=f"tarj_color_{i}",
+            )
             if st.button("🗑️ Eliminar esta tarjeta", key=f"tarj_del_{i}"):
                 st.session_state.tarjetas_edit.pop(i)
                 st.rerun()
             st.markdown("---")
         if st.button("➕ Agregar tarjeta", key="tarj_add_btn"):
-            st.session_state.tarjetas_edit.append({"titulo": "", "texto": ""})
+            st.session_state.tarjetas_edit.append({"titulo": "", "texto": "", "color": ""})
             st.rerun()
 
         st.divider()
@@ -644,8 +712,24 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error(
-                    "No se pudo guardar en la base de datos. Verificá que "
-                    "exista la tabla 'contenido_home' en Supabase (ver "
-                    "instrucciones SQL en los comentarios de app.py). "
-                    f"Detalle: {_err}"
+                    "No se pudo guardar en la base de datos. Detalle: "
+                    f"{_err}"
                 )
+                st.info(
+                    "Probá el botón '🔍 Diagnosticar conexión' de más abajo "
+                    "para ver exactamente en qué paso falla."
+                )
+
+        st.divider()
+
+        # ── DIAGNÓSTICO ───────────────────────────────────────────────
+        if st.button("🔍 Diagnosticar conexión", key="admin_diag_btn"):
+            with st.spinner("Probando conexión..."):
+                _pasos = _diagnosticar_conexion()
+            for _nombre, _ok_paso, _detalle in _pasos:
+                if _ok_paso:
+                    st.success(f"✅ {_nombre}")
+                else:
+                    st.error(f"❌ {_nombre}")
+                    if _detalle:
+                        st.code(_detalle)
