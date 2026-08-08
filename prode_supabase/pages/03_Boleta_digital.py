@@ -265,9 +265,20 @@ st.markdown(
         border-radius: 18px;
         min-height: 64px;
         width: 100%;
-        font-size: 1.55rem;
-        font-weight: 600;
-        color: rgba(148,163,184,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        white-space: normal;
+        word-break: break-word;
+        line-height: 1.15;
+        padding: 6px 8px;
+        font-size: 0.92rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        font-family: 'Inter', sans-serif;
+        color: rgba(148,163,184,0.75);
         box-shadow: 0 4px 18px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.05);
         transition: transform 0.18s cubic-bezier(.34,1.56,.64,1),
                     border-color 0.18s ease, box-shadow 0.22s ease,
@@ -300,11 +311,6 @@ st.markdown(
         0%   { transform: scale(0.88); }
         65%  { transform: scale(1.09); }
         100% { transform: scale(1.045); }
-    }
-    .pick1x2-label {
-        text-align: center; font-size: 0.68rem; font-weight: 600;
-        text-transform: uppercase; letter-spacing: 0.07em; color: #94a3b8;
-        margin-top: 6px; font-family: 'Inter', sans-serif;
     }
     </style>
     """.replace("__FONDO_AFA2026__", _FONDO_AFA2026),
@@ -1290,16 +1296,12 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                 with _col:
                                     _elegido = elegido_activo and signo_actual == _cod
                                     st.button(
-                                        "✕" if _elegido else "•",
+                                        f"✓ {_nombre}" if _elegido else _nombre,
                                         key=f"pick_{_cod}_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         type="primary" if _elegido else "secondary",
                                         use_container_width=True,
                                         on_click=_elegir_signo,
                                         args=(_cod, _gl_key, _gv_key, _elegido_key, p["id"], _presets_signo),
-                                    )
-                                    st.markdown(
-                                        f'<div class="pick1x2-label">{_nombre}</div>',
-                                        unsafe_allow_html=True,
                                     )
 
                             col_gl, col_gv, col_reset, col_estado = st.columns([1, 1, 1.3, 1.6])
