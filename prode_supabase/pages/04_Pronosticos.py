@@ -678,8 +678,7 @@ def render_card_partido(local, visitante, fecha_partido, hora, estadio,
             + '<div class="candado">🔒</div>'
             + '<div class="titulo">Nombres ocultos</div>'
             + '<div class="subtitulo">Quién apostó a qué se va a revelar '
-            'automáticamente apenas arranque el partido, para que nadie '
-            'pueda copiarse de otro participante.</div>'
+            'automáticamente apenas arranque el partido. '
             + '</div>'
         )
 
