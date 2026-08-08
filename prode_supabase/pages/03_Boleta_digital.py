@@ -908,10 +908,46 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
         en los goles la próxima vez que se abra, en vez de esos números.
         """
         try:
-            signo = _calcular_signo(gl_pred, gv_pred)
-
             # Obtener resultado real del partido para calcular puntos al instante
             partido_data = next((p for p in partidos_db if p["id"] == partido_id), {})
+
+            # ══════════════════════════════════════════════════════════════
+            # BLINDAJE DE SEGURIDAD — chequeo de cierre EN EL SERVIDOR, en el
+            # momento exacto de guardar (no solo visual en la pantalla).
+            #
+            # Antes, el cierre de un pronóstico dependía de que la página se
+            # hubiera refrescado sola a tiempo (auto-refresh). Eso es solo
+            # una comodidad visual y NO es confiable al 100%: si alguien
+            # deja la boleta abierta desde antes (pestaña en segundo plano,
+            # el navegador frena los timers, se cae la conexión un segundo,
+            # etc.), la pantalla podía seguir mostrando los botones editables
+            # aunque el partido ya hubiera arrancado — y ahí sí alguien
+            # podría intentar hacer trampa cargando el resultado ya sabido.
+            #
+            # Este chequeo re-calcula la hora ACTUAL (no la de cuando se
+            # dibujó la pantalla) cada vez que se intenta guardar, así que
+            # es imposible guardar un pronóstico después del cierre, más
+            # allá de lo que muestre la pantalla en ese momento. El admin
+            # (con "Permitir editar esta boleta como admin" activado) sigue
+            # pudiendo corregir boletas manualmente incluso después del
+            # cierre, a propósito.
+            # ══════════════════════════════════════════════════════════════
+            ya_jugado_chk = (
+                partido_data.get("goles_local") is not None
+                and partido_data.get("goles_visitante") is not None
+            )
+            if (
+                not st.session_state.es_admin
+                and not ya_jugado_chk
+                and _pronostico_cerrado(partido_data)
+            ):
+                st.error(
+                    "🔒 Este partido ya arrancó (o está a punto de arrancar) y el "
+                    "plazo para pronosticarlo se cerró. No se guardó el cambio."
+                )
+                return False
+
+            signo = _calcular_signo(gl_pred, gv_pred)
             gl_real = partido_data.get("goles_local")
             gv_real = partido_data.get("goles_visitante")
             signo_real = _calcular_signo(gl_real, gv_real)
@@ -1470,334 +1506,347 @@ tab_resultados, tab_jugadores, tab_boletas, tab_meses = st.tabs(
 )
 
 # ── Tab 1: resultados reales ──────────────────────────────────────────────
-with tab_resultados:
-    st.caption(
-        "Cargá el resultado real de cada partido. Los pronósticos se comparan "
-        "automáticamente: 1 punto si acertaron el signo (1/X/2), 3 puntos en "
-        "total si acertaron el marcador exacto."
-    )
-    por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
-    tabs_r = st.tabs([etiqueta_zona(z) for z in zonas_orden])
-    for tab, zona in zip(tabs_r, zonas_orden):
-        with tab:
-            fechas = sorted(por_zona[zona].keys(), key=int)
-            for fecha in fechas:
-                partidos_fecha = sorted(
-                    por_zona[zona][fecha],
-                    key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
-                )
-                with st.expander(f"Fecha {fecha}"):
-                    clave_fecha = f"{zona}_{fecha}"
-                    ids_partidos_fecha = [p["id"] for p in partidos_fecha]
+@st.fragment
+def _tab_resultados_fragment():
+    """
+    Toda la pestaña 'Cargar Resultados' corre como @st.fragment: es la
+    pestaña más pesada del panel admin (recorre TODOS los partidos de
+    TODAS las zonas y fechas). Al aislarla en un fragmento, entrar a
+    tocar algo en las otras pestañas (Jugadores, Boletas, Meses) ya no
+    obliga a re-renderizar toda esta también, así el panel admin se
+    siente más ágil en general.
+    """
+    with tab_resultados:
+        st.caption(
+            "Cargá el resultado real de cada partido. Los pronósticos se comparan "
+            "automáticamente: 1 punto si acertaron el signo (1/X/2), 3 puntos en "
+            "total si acertaron el marcador exacto."
+        )
+        por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
+        tabs_r = st.tabs([etiqueta_zona(z) for z in zonas_orden])
+        for tab, zona in zip(tabs_r, zonas_orden):
+            with tab:
+                fechas = sorted(por_zona[zona].keys(), key=int)
+                for fecha in fechas:
+                    partidos_fecha = sorted(
+                        por_zona[zona][fecha],
+                        key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
+                    )
+                    with st.expander(f"Fecha {fecha}"):
+                        clave_fecha = f"{zona}_{fecha}"
+                        ids_partidos_fecha = [p["id"] for p in partidos_fecha]
 
-                    # ── Resetear la fecha completa (todos sus partidos) ───
-                    # Solo admin (todo este bloque está dentro del guard
-                    # `if not st.session_state.es_admin: st.stop()`).
-                    if st.session_state.confirmar_reset_fecha == clave_fecha:
-                        st.error(
-                            f"¿Resetear **TODOS** los partidos de la Fecha {fecha} "
-                            f"({etiqueta_zona(zona)})? Se borran los resultados y "
-                            "los puntos ya asignados de esos partidos, **incluso "
-                            "los que ya se jugaron**. No se puede deshacer."
-                        )
-                        col_sif, col_nof = st.columns(2)
-                        with col_sif:
-                            if st.button(
-                                "✅ Sí, resetear toda la fecha",
-                                key=f"reset_fecha_si_{clave_fecha}",
-                                use_container_width=True,
-                            ):
-                                try:
-                                    sb.table("partidos").update({
-                                        "goles_local":     None,
-                                        "goles_visitante": None,
-                                    }).in_("id", ids_partidos_fecha).execute()
-
-                                    # Verificación real con SELECT fresco
-                                    verif_fecha = (
-                                        sb.table("partidos")
-                                        .select("id, goles_local, goles_visitante")
-                                        .in_("id", ids_partidos_fecha)
-                                        .execute()
-                                        .data or []
-                                    )
-                                    sin_resetear = [
-                                        f["id"] for f in verif_fecha
-                                        if f.get("goles_local") is not None or f.get("goles_visitante") is not None
-                                    ]
-                                    if sin_resetear:
-                                        st.error(
-                                            "⚠️ Se ejecutó el reseteo pero los partidos "
-                                            f"{sin_resetear} siguen con resultado cargado en "
-                                            "la base. Revisar RLS/triggers."
-                                        )
-                                        st.stop()
-
-                                    # Borrar puntos ya asignados de todos los pronósticos
-                                    # de los partidos de esta fecha (vuelven a "pendientes")
-                                    sb.table("pronosticos").update({"puntos": None}).in_(
-                                        "partido_id", ids_partidos_fecha
-                                    ).execute()
-
-                                    cargar_partidos.clear()
-                                    st.cache_data.clear()
-                                    _invalidar_cache_pron()  # cambió "puntos" de todos los jugadores
-                                    st.session_state.confirmar_reset_fecha = None
-                                    st.toast(f"Fecha {fecha} reseteada por completo.", icon="🔄")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error al resetear la fecha: {e}")
-                                    st.exception(e)
-                        with col_nof:
-                            if st.button(
-                                "❌ Cancelar",
-                                key=f"reset_fecha_no_{clave_fecha}",
-                                use_container_width=True,
-                            ):
-                                st.session_state.confirmar_reset_fecha = None
-                                st.rerun()
-                    else:
-                        if st.button(
-                            "🔄🗓️ Resetear TODA la fecha (incluso ya jugada)",
-                            key=f"reset_fecha_{clave_fecha}",
-                            help=(
-                                "Borra el resultado y los puntos de TODOS los partidos "
-                                "de esta fecha, aunque ya se hayan jugado y cargado."
-                            ),
-                        ):
-                            st.session_state.confirmar_reset_fecha = clave_fecha
-                            st.rerun()
-
-                    st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
-
-                    for p in partidos_fecha:
-                        local, visitante = p["equipo_local"], p["equipo_visitante"]
-                        gl_act = p.get("goles_local")
-                        gv_act = p.get("goles_visitante")
-
-                        # Mostrar signo actual si ya está jugado
-                        if gl_act is not None and gv_act is not None:
-                            if gl_act > gv_act:   signo_actual = "1 · LOCAL"
-                            elif gl_act == gv_act: signo_actual = "X · EMPATE"
-                            else:                  signo_actual = "2 · VISITANTE"
-                            st.markdown(
-                                f"**{local}** vs **{visitante}** — "
-                                f"Resultado: `{gl_act}-{gv_act}` → **{signo_actual}**"
+                        # ── Resetear la fecha completa (todos sus partidos) ───
+                        # Solo admin (todo este bloque está dentro del guard
+                        # `if not st.session_state.es_admin: st.stop()`).
+                        if st.session_state.confirmar_reset_fecha == clave_fecha:
+                            st.error(
+                                f"¿Resetear **TODOS** los partidos de la Fecha {fecha} "
+                                f"({etiqueta_zona(zona)})? Se borran los resultados y "
+                                "los puntos ya asignados de esos partidos, **incluso "
+                                "los que ya se jugaron**. No se puede deshacer."
                             )
-                        else:
-                            st.markdown(f"**{local}** vs **{visitante}** — *Sin resultado*")
-
-                        c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-                        with c1:
-                            gl_new = st.number_input(
-                                "Goles local", min_value=0, max_value=20,
-                                value=gl_act if gl_act is not None else 0,
-                                key=f"admin_gl_{p['id']}",
-                            )
-                        with c2:
-                            gv_new = st.number_input(
-                                "Goles visitante", min_value=0, max_value=20,
-                                value=gv_act if gv_act is not None else 0,
-                                key=f"admin_gv_{p['id']}",
-                            )
-                        with c3:
-                            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                            if st.button("💾 Guardar", key=f"admin_save_{p['id']}", use_container_width=True):
-                                try:
-                                    resp_update = (
-                                        sb.table("partidos")
-                                        .update({
-                                            "goles_local":     int(gl_new),
-                                            "goles_visitante": int(gv_new),
-                                        })
-                                        .eq("id", p["id"])
-                                        .execute()
-                                    )
-
-                                    filas_afectadas = resp_update.data or []
-
-                                    # Verificación real: traer el registro fresco (sin caché)
-                                    # y comparar, porque .data puede venir vacío aunque el
-                                    # UPDATE sí se haya aplicado en la base (gotcha conocido
-                                    # de supabase-py con el header Prefer/representation).
-                                    verificacion = (
-                                        sb.table("partidos")
-                                        .select("id, goles_local, goles_visitante")
-                                        .eq("id", p["id"])
-                                        .execute()
-                                        .data
-                                    )
-                                    fila_real = verificacion[0] if verificacion else None
-                                    realmente_actualizado = (
-                                        fila_real is not None
-                                        and fila_real.get("goles_local") == int(gl_new)
-                                        and fila_real.get("goles_visitante") == int(gv_new)
-                                    )
-
-                                    if not filas_afectadas and not realmente_actualizado:
-                                        st.error(
-                                            "⚠️ Verifiqué con un SELECT fresco después del UPDATE y el "
-                                            "valor en la base sigue siendo el viejo. El UPDATE NO se "
-                                            "aplicó de verdad (no es solo un tema de respuesta vacía).\n\n"
-                                            f"Fila encontrada en la base: `{fila_real}`\n\n"
-                                            "Con service_role esto descarta RLS. Revisar: "
-                                            "¿el 'id' que usa esta fila realmente existe en la tabla? "
-                                            "¿hay un trigger en 'partidos' que revierte el cambio? "
-                                            "¿la app está apuntando a otro proyecto/URL de Supabase "
-                                            "distinto al que estás mirando en el dashboard?"
-                                        )
-                                        st.stop()
-                                    elif not filas_afectadas and realmente_actualizado:
-                                        st.info(
-                                            "ℹ️ El UPDATE sí se aplicó en la base (confirmado con SELECT "
-                                            "fresco), solo que la respuesta de Supabase no traía las filas "
-                                            "en `.data`. Sigo con el guardado normalmente."
-                                        )
-
-                                    # Recalcular puntos de pronósticos de este partido
-                                    if gl_new > gv_new:   signo_r = "1"
-                                    elif gl_new == gv_new: signo_r = "X"
-                                    else:                  signo_r = "2"
-
-                                    prons = (
-                                        sb.table("pronosticos")
-                                        .select("id, signo_pred, goles_local_pred, goles_visitante_pred, sin_marcador")
-                                        .eq("partido_id", p["id"])
-                                        .execute()
-                                        .data or []
-                                    )
-                                    for pr in prons:
-                                        gl_pr = pr.get("goles_local_pred")
-                                        gv_pr = pr.get("goles_visitante_pred")
-                                        sin_marc_pr = bool(pr.get("sin_marcador"))
-                                        if sin_marc_pr:
-                                            # Solo pronosticó el signo (1/X/2): tope de 1
-                                            # punto, aunque el marcador placeholder guardado
-                                            # coincida con el resultado real.
-                                            pts = 1 if pr["signo_pred"] == signo_r else 0
-                                        elif gl_pr is not None and gv_pr is not None and gl_pr == int(gl_new) and gv_pr == int(gv_new):
-                                            pts = 3
-                                        elif pr["signo_pred"] == signo_r:
-                                            pts = 1
-                                        else:
-                                            pts = 0
-                                        sb.table("pronosticos").update({"puntos": pts}).eq("id", pr["id"]).execute()
-
-                                    cargar_partidos.clear()
-                                    st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
-                                    _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
-                                    st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error al guardar: {e}")
-                                    st.exception(e)
-                        with c4:
-                            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-                            if st.button(
-                                "🔄 Resetear partido",
-                                key=f"admin_reset_{p['id']}",
-                                use_container_width=True,
-                                help="Vuelve el partido a 'no disputado': borra el resultado y los puntos ya asignados (funciona aunque ya se haya jugado).",
-                            ):
-                                try:
-                                    sb.table("partidos").update({
-                                        "goles_local":     None,
-                                        "goles_visitante": None,
-                                    }).eq("id", p["id"]).execute()
-
-                                    # Verificación real con SELECT fresco
-                                    verif_reset = (
-                                        sb.table("partidos")
-                                        .select("id, goles_local, goles_visitante")
-                                        .eq("id", p["id"])
-                                        .execute()
-                                        .data
-                                    )
-                                    fila_reset = verif_reset[0] if verif_reset else None
-                                    if not fila_reset or fila_reset.get("goles_local") is not None or fila_reset.get("goles_visitante") is not None:
-                                        st.error(
-                                            "⚠️ Se intentó resetear el partido pero el valor en la base "
-                                            f"sigue siendo el viejo: `{fila_reset}`. Revisar RLS/triggers."
-                                        )
-                                        st.stop()
-
-                                    # Borrar puntos ya asignados de los pronósticos de este partido
-                                    # (vuelven a quedar "pendientes", como si el partido no se hubiera jugado)
-                                    sb.table("pronosticos").update({"puntos": None}).eq("partido_id", p["id"]).execute()
-
-                                    cargar_partidos.clear()
-                                    st.cache_data.clear()
-                                    _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
-                                    st.toast(f"Partido {local} vs {visitante} reseteado a no disputado.", icon="🔄")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error al resetear: {e}")
-                                    st.exception(e)
-
-                        # ── Modificar horario manualmente ─────────────────
-                        # Además de poder cargarse/corregirse directo en la
-                        # base de datos, el admin puede hacerlo a mano desde
-                        # acá (fecha y hora usadas para calcular el cierre
-                        # del pronóstico de ese partido).
-                        with st.expander(f"🕒 Modificar horario — {local} vs {visitante}"):
-                            _fecha_actual_h = _parsear_fecha(p.get("fecha_partido")) or datetime.now(TZ_ARG).date()
-                            _hora_actual_h = _parsear_hora(p.get("hora")) or datetime.now(TZ_ARG).time().replace(second=0, microsecond=0)
-                            ch1, ch2, ch3 = st.columns([1, 1, 1])
-                            with ch1:
-                                nueva_fecha_h = st.date_input(
-                                    "Fecha del partido",
-                                    value=_fecha_actual_h,
-                                    key=f"admin_fecha_{p['id']}",
-                                )
-                            with ch2:
-                                nueva_hora_h = st.time_input(
-                                    "Hora del partido",
-                                    value=_hora_actual_h,
-                                    key=f"admin_hora_{p['id']}",
-                                )
-                            with ch3:
-                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                            col_sif, col_nof = st.columns(2)
+                            with col_sif:
                                 if st.button(
-                                    "🕒 Guardar horario",
-                                    key=f"admin_save_horario_{p['id']}",
+                                    "✅ Sí, resetear toda la fecha",
+                                    key=f"reset_fecha_si_{clave_fecha}",
                                     use_container_width=True,
                                 ):
                                     try:
                                         sb.table("partidos").update({
-                                            "fecha_partido": nueva_fecha_h.strftime("%Y-%m-%d"),
-                                            "hora":          nueva_hora_h.strftime("%H:%M"),
-                                        }).eq("id", p["id"]).execute()
+                                            "goles_local":     None,
+                                            "goles_visitante": None,
+                                        }).in_("id", ids_partidos_fecha).execute()
 
                                         # Verificación real con SELECT fresco
-                                        verif_hor = (
+                                        verif_fecha = (
                                             sb.table("partidos")
-                                            .select("id, fecha_partido, hora")
+                                            .select("id, goles_local, goles_visitante")
+                                            .in_("id", ids_partidos_fecha)
+                                            .execute()
+                                            .data or []
+                                        )
+                                        sin_resetear = [
+                                            f["id"] for f in verif_fecha
+                                            if f.get("goles_local") is not None or f.get("goles_visitante") is not None
+                                        ]
+                                        if sin_resetear:
+                                            st.error(
+                                                "⚠️ Se ejecutó el reseteo pero los partidos "
+                                                f"{sin_resetear} siguen con resultado cargado en "
+                                                "la base. Revisar RLS/triggers."
+                                            )
+                                            st.stop()
+
+                                        # Borrar puntos ya asignados de todos los pronósticos
+                                        # de los partidos de esta fecha (vuelven a "pendientes")
+                                        sb.table("pronosticos").update({"puntos": None}).in_(
+                                            "partido_id", ids_partidos_fecha
+                                        ).execute()
+
+                                        cargar_partidos.clear()
+                                        st.cache_data.clear()
+                                        _invalidar_cache_pron()  # cambió "puntos" de todos los jugadores
+                                        st.session_state.confirmar_reset_fecha = None
+                                        st.toast(f"Fecha {fecha} reseteada por completo.", icon="🔄")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error al resetear la fecha: {e}")
+                                        st.exception(e)
+                            with col_nof:
+                                if st.button(
+                                    "❌ Cancelar",
+                                    key=f"reset_fecha_no_{clave_fecha}",
+                                    use_container_width=True,
+                                ):
+                                    st.session_state.confirmar_reset_fecha = None
+                                    st.rerun()
+                        else:
+                            if st.button(
+                                "🔄🗓️ Resetear TODA la fecha (incluso ya jugada)",
+                                key=f"reset_fecha_{clave_fecha}",
+                                help=(
+                                    "Borra el resultado y los puntos de TODOS los partidos "
+                                    "de esta fecha, aunque ya se hayan jugado y cargado."
+                                ),
+                            ):
+                                st.session_state.confirmar_reset_fecha = clave_fecha
+                                st.rerun()
+
+                        st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
+
+                        for p in partidos_fecha:
+                            local, visitante = p["equipo_local"], p["equipo_visitante"]
+                            gl_act = p.get("goles_local")
+                            gv_act = p.get("goles_visitante")
+
+                            # Mostrar signo actual si ya está jugado
+                            if gl_act is not None and gv_act is not None:
+                                if gl_act > gv_act:   signo_actual = "1 · LOCAL"
+                                elif gl_act == gv_act: signo_actual = "X · EMPATE"
+                                else:                  signo_actual = "2 · VISITANTE"
+                                st.markdown(
+                                    f"**{local}** vs **{visitante}** — "
+                                    f"Resultado: `{gl_act}-{gv_act}` → **{signo_actual}**"
+                                )
+                            else:
+                                st.markdown(f"**{local}** vs **{visitante}** — *Sin resultado*")
+
+                            c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+                            with c1:
+                                gl_new = st.number_input(
+                                    "Goles local", min_value=0, max_value=20,
+                                    value=gl_act if gl_act is not None else 0,
+                                    key=f"admin_gl_{p['id']}",
+                                )
+                            with c2:
+                                gv_new = st.number_input(
+                                    "Goles visitante", min_value=0, max_value=20,
+                                    value=gv_act if gv_act is not None else 0,
+                                    key=f"admin_gv_{p['id']}",
+                                )
+                            with c3:
+                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                if st.button("💾 Guardar", key=f"admin_save_{p['id']}", use_container_width=True):
+                                    try:
+                                        resp_update = (
+                                            sb.table("partidos")
+                                            .update({
+                                                "goles_local":     int(gl_new),
+                                                "goles_visitante": int(gv_new),
+                                            })
+                                            .eq("id", p["id"])
+                                            .execute()
+                                        )
+
+                                        filas_afectadas = resp_update.data or []
+
+                                        # Verificación real: traer el registro fresco (sin caché)
+                                        # y comparar, porque .data puede venir vacío aunque el
+                                        # UPDATE sí se haya aplicado en la base (gotcha conocido
+                                        # de supabase-py con el header Prefer/representation).
+                                        verificacion = (
+                                            sb.table("partidos")
+                                            .select("id, goles_local, goles_visitante")
                                             .eq("id", p["id"])
                                             .execute()
                                             .data
                                         )
-                                        fila_hor = verif_hor[0] if verif_hor else None
-                                        if not fila_hor or _parsear_fecha(fila_hor.get("fecha_partido")) != nueva_fecha_h or _parsear_hora(fila_hor.get("hora")) != nueva_hora_h:
+                                        fila_real = verificacion[0] if verificacion else None
+                                        realmente_actualizado = (
+                                            fila_real is not None
+                                            and fila_real.get("goles_local") == int(gl_new)
+                                            and fila_real.get("goles_visitante") == int(gv_new)
+                                        )
+
+                                        if not filas_afectadas and not realmente_actualizado:
                                             st.error(
-                                                "⚠️ Se ejecutó el guardado pero el horario en la "
-                                                f"base sigue distinto: `{fila_hor}`. Revisar RLS/triggers."
+                                                "⚠️ Verifiqué con un SELECT fresco después del UPDATE y el "
+                                                "valor en la base sigue siendo el viejo. El UPDATE NO se "
+                                                "aplicó de verdad (no es solo un tema de respuesta vacía).\n\n"
+                                                f"Fila encontrada en la base: `{fila_real}`\n\n"
+                                                "Con service_role esto descarta RLS. Revisar: "
+                                                "¿el 'id' que usa esta fila realmente existe en la tabla? "
+                                                "¿hay un trigger en 'partidos' que revierte el cambio? "
+                                                "¿la app está apuntando a otro proyecto/URL de Supabase "
+                                                "distinto al que estás mirando en el dashboard?"
+                                            )
+                                            st.stop()
+                                        elif not filas_afectadas and realmente_actualizado:
+                                            st.info(
+                                                "ℹ️ El UPDATE sí se aplicó en la base (confirmado con SELECT "
+                                                "fresco), solo que la respuesta de Supabase no traía las filas "
+                                                "en `.data`. Sigo con el guardado normalmente."
+                                            )
+
+                                        # Recalcular puntos de pronósticos de este partido
+                                        if gl_new > gv_new:   signo_r = "1"
+                                        elif gl_new == gv_new: signo_r = "X"
+                                        else:                  signo_r = "2"
+
+                                        prons = (
+                                            sb.table("pronosticos")
+                                            .select("id, signo_pred, goles_local_pred, goles_visitante_pred, sin_marcador")
+                                            .eq("partido_id", p["id"])
+                                            .execute()
+                                            .data or []
+                                        )
+                                        for pr in prons:
+                                            gl_pr = pr.get("goles_local_pred")
+                                            gv_pr = pr.get("goles_visitante_pred")
+                                            sin_marc_pr = bool(pr.get("sin_marcador"))
+                                            if sin_marc_pr:
+                                                # Solo pronosticó el signo (1/X/2): tope de 1
+                                                # punto, aunque el marcador placeholder guardado
+                                                # coincida con el resultado real.
+                                                pts = 1 if pr["signo_pred"] == signo_r else 0
+                                            elif gl_pr is not None and gv_pr is not None and gl_pr == int(gl_new) and gv_pr == int(gv_new):
+                                                pts = 3
+                                            elif pr["signo_pred"] == signo_r:
+                                                pts = 1
+                                            else:
+                                                pts = 0
+                                            sb.table("pronosticos").update({"puntos": pts}).eq("id", pr["id"]).execute()
+
+                                        cargar_partidos.clear()
+                                        st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
+                                        _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
+                                        st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error al guardar: {e}")
+                                        st.exception(e)
+                            with c4:
+                                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                if st.button(
+                                    "🔄 Resetear partido",
+                                    key=f"admin_reset_{p['id']}",
+                                    use_container_width=True,
+                                    help="Vuelve el partido a 'no disputado': borra el resultado y los puntos ya asignados (funciona aunque ya se haya jugado).",
+                                ):
+                                    try:
+                                        sb.table("partidos").update({
+                                            "goles_local":     None,
+                                            "goles_visitante": None,
+                                        }).eq("id", p["id"]).execute()
+
+                                        # Verificación real con SELECT fresco
+                                        verif_reset = (
+                                            sb.table("partidos")
+                                            .select("id, goles_local, goles_visitante")
+                                            .eq("id", p["id"])
+                                            .execute()
+                                            .data
+                                        )
+                                        fila_reset = verif_reset[0] if verif_reset else None
+                                        if not fila_reset or fila_reset.get("goles_local") is not None or fila_reset.get("goles_visitante") is not None:
+                                            st.error(
+                                                "⚠️ Se intentó resetear el partido pero el valor en la base "
+                                                f"sigue siendo el viejo: `{fila_reset}`. Revisar RLS/triggers."
                                             )
                                             st.stop()
 
+                                        # Borrar puntos ya asignados de los pronósticos de este partido
+                                        # (vuelven a quedar "pendientes", como si el partido no se hubiera jugado)
+                                        sb.table("pronosticos").update({"puntos": None}).eq("partido_id", p["id"]).execute()
+
                                         cargar_partidos.clear()
                                         st.cache_data.clear()
-                                        st.toast(
-                                            f"Horario actualizado: {nueva_fecha_h.strftime('%d/%m/%Y')} "
-                                            f"{nueva_hora_h.strftime('%H:%M')}",
-                                            icon="🕒",
-                                        )
+                                        _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
+                                        st.toast(f"Partido {local} vs {visitante} reseteado a no disputado.", icon="🔄")
                                         st.rerun()
                                     except Exception as e:
-                                        st.error(f"Error al actualizar el horario: {e}")
+                                        st.error(f"Error al resetear: {e}")
                                         st.exception(e)
 
-                        st.markdown("<hr style='opacity:0.08;'>", unsafe_allow_html=True)
+                            # ── Modificar horario manualmente ─────────────────
+                            # Además de poder cargarse/corregirse directo en la
+                            # base de datos, el admin puede hacerlo a mano desde
+                            # acá (fecha y hora usadas para calcular el cierre
+                            # del pronóstico de ese partido).
+                            with st.expander(f"🕒 Modificar horario — {local} vs {visitante}"):
+                                _fecha_actual_h = _parsear_fecha(p.get("fecha_partido")) or datetime.now(TZ_ARG).date()
+                                _hora_actual_h = _parsear_hora(p.get("hora")) or datetime.now(TZ_ARG).time().replace(second=0, microsecond=0)
+                                ch1, ch2, ch3 = st.columns([1, 1, 1])
+                                with ch1:
+                                    nueva_fecha_h = st.date_input(
+                                        "Fecha del partido",
+                                        value=_fecha_actual_h,
+                                        key=f"admin_fecha_{p['id']}",
+                                    )
+                                with ch2:
+                                    nueva_hora_h = st.time_input(
+                                        "Hora del partido",
+                                        value=_hora_actual_h,
+                                        key=f"admin_hora_{p['id']}",
+                                    )
+                                with ch3:
+                                    st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                    if st.button(
+                                        "🕒 Guardar horario",
+                                        key=f"admin_save_horario_{p['id']}",
+                                        use_container_width=True,
+                                    ):
+                                        try:
+                                            sb.table("partidos").update({
+                                                "fecha_partido": nueva_fecha_h.strftime("%Y-%m-%d"),
+                                                "hora":          nueva_hora_h.strftime("%H:%M"),
+                                            }).eq("id", p["id"]).execute()
 
+                                            # Verificación real con SELECT fresco
+                                            verif_hor = (
+                                                sb.table("partidos")
+                                                .select("id, fecha_partido, hora")
+                                                .eq("id", p["id"])
+                                                .execute()
+                                                .data
+                                            )
+                                            fila_hor = verif_hor[0] if verif_hor else None
+                                            if not fila_hor or _parsear_fecha(fila_hor.get("fecha_partido")) != nueva_fecha_h or _parsear_hora(fila_hor.get("hora")) != nueva_hora_h:
+                                                st.error(
+                                                    "⚠️ Se ejecutó el guardado pero el horario en la "
+                                                    f"base sigue distinto: `{fila_hor}`. Revisar RLS/triggers."
+                                                )
+                                                st.stop()
+
+                                            cargar_partidos.clear()
+                                            st.cache_data.clear()
+                                            st.toast(
+                                                f"Horario actualizado: {nueva_fecha_h.strftime('%d/%m/%Y')} "
+                                                f"{nueva_hora_h.strftime('%H:%M')}",
+                                                icon="🕒",
+                                            )
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error al actualizar el horario: {e}")
+                                            st.exception(e)
+
+                            st.markdown("<hr style='opacity:0.08;'>", unsafe_allow_html=True)
+
+
+
+_tab_resultados_fragment()
 
 # ── Tab 2: administrar jugadores ──────────────────────────────────────────
 with tab_jugadores:
