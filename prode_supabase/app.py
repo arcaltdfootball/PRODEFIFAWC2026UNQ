@@ -74,7 +74,7 @@ ADMIN_PASSWORD = "aleotero"
 
 DEFAULT_AVISOS = [
     "En la Boleta Digital de AGOSTO se juegan las fechas: 3 / 4 / 5 / 6 / 7.",
-    "FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. Sistema de puntaje: 1 punto por acertar el resultado (Local / Empate / Visitante) · 3 puntos en total si acertás el resultado exacto.",
+    "FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. Sistema de puntaje: 1 punto si acierta la Condición (Local / Empate / Visitante) · 3 puntos en total si acierta el Resultado exacto.",
 ]
 
 DEFAULT_TARJETAS = [
