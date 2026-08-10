@@ -62,7 +62,16 @@ sdk = mercadopago.SDK(st.secrets["MP_ACCESS_TOKEN"])
 def crear_preferencia_pago(jugador_id: int, nombre: str) -> str:
     """Crea una preferencia de pago (Checkout Pro) para un jugador y
     devuelve el link (init_point) al que hay que redirigirlo para pagar."""
-    base_url = st.secrets["MP_BASE_URL"]
+    base_url = st.secrets["MP_BASE_URL"].rstrip("/")
+    # IMPORTANTE: el back_url tiene que apuntar puntualmente a esta página
+    # (Boleta_digital), no a la raíz del sitio. La lógica que re-loguea al
+    # jugador y verifica el pago al volver de Mercado Pago vive acá, en
+    # 03_Boleta_digital.py, que Streamlit sirve en la ruta "/Boleta_digital"
+    # (nombre de archivo sin el prefijo numérico "03_" ni la extensión).
+    # Si el back_url apunta a "/", el usuario cae en el Home al volver, ese
+    # código nunca se ejecuta, y por eso queda deslogueado y sin la boleta
+    # marcada como paga.
+    pagina_boleta = f"{base_url}/Boleta_digital"
     preference_data = {
         "items": [{
             "title": f"Inscripción Prode - {nombre}",
@@ -72,9 +81,9 @@ def crear_preferencia_pago(jugador_id: int, nombre: str) -> str:
         }],
         "external_reference": str(jugador_id),
         "back_urls": {
-            "success": f"{base_url}/?pago=ok&jid={jugador_id}",
-            "pending": f"{base_url}/?pago=pendiente&jid={jugador_id}",
-            "failure": f"{base_url}/?pago=fallo&jid={jugador_id}",
+            "success": f"{pagina_boleta}/?pago=ok&jid={jugador_id}",
+            "pending": f"{pagina_boleta}/?pago=pendiente&jid={jugador_id}",
+            "failure": f"{pagina_boleta}/?pago=fallo&jid={jugador_id}",
         },
         "auto_return": "approved",
     }
@@ -265,20 +274,9 @@ st.markdown(
         border-radius: 18px;
         min-height: 64px;
         width: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        white-space: normal;
-        word-break: break-word;
-        line-height: 1.15;
-        padding: 6px 8px;
-        font-size: 0.92rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        font-family: 'Inter', sans-serif;
-        color: rgba(148,163,184,0.75);
+        font-size: 1.55rem;
+        font-weight: 600;
+        color: rgba(148,163,184,0.6);
         box-shadow: 0 4px 18px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.05);
         transition: transform 0.18s cubic-bezier(.34,1.56,.64,1),
                     border-color 0.18s ease, box-shadow 0.22s ease,
@@ -311,6 +309,11 @@ st.markdown(
         0%   { transform: scale(0.88); }
         65%  { transform: scale(1.09); }
         100% { transform: scale(1.045); }
+    }
+    .pick1x2-label {
+        text-align: center; font-size: 0.68rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.07em; color: #94a3b8;
+        margin-top: 6px; font-family: 'Inter', sans-serif;
     }
     </style>
     """.replace("__FONDO_AFA2026__", _FONDO_AFA2026),
@@ -532,6 +535,7 @@ if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"
     if _params_mp.get("pago") == "ok":
         _cid = _params_mp.get("collection_id") or _params_mp.get("payment_id")
         if _cid and verificar_pago(_jid_mp, _cid):
+            st.session_state._recien_logueado = True
             st.success("✅ ¡Pago acreditado! Ya podés participar — bienvenido de nuevo.")
         else:
             st.warning(
@@ -713,7 +717,7 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
 
             st.markdown(
                 f"""
-                <a href="{link_pago}" target="_blank" rel="noopener noreferrer"
+                <a href="{link_pago}" rel="noopener noreferrer"
                    style="
                         display:flex; align-items:center; justify-content:center;
                         gap:10px; width:100%; box-sizing:border-box;
@@ -1296,12 +1300,16 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                 with _col:
                                     _elegido = elegido_activo and signo_actual == _cod
                                     st.button(
-                                        f"✓ {_nombre}" if _elegido else _nombre,
+                                        "✕" if _elegido else "•",
                                         key=f"pick_{_cod}_{key_ns}_{jugador_objetivo_id}_{p['id']}",
                                         type="primary" if _elegido else "secondary",
                                         use_container_width=True,
                                         on_click=_elegir_signo,
                                         args=(_cod, _gl_key, _gv_key, _elegido_key, p["id"], _presets_signo),
+                                    )
+                                    st.markdown(
+                                        f'<div class="pick1x2-label">{_nombre}</div>',
+                                        unsafe_allow_html=True,
                                     )
 
                             col_gl, col_gv, col_reset, col_estado = st.columns([1, 1, 1.3, 1.6])
