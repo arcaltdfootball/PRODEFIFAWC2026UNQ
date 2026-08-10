@@ -36,6 +36,12 @@ porque es un prode privado entre amigos/familia, no una app con datos
 sensibles. Los jugadores creados o con contraseña reseteada ANTES de este
 cambio no van a tener `password_plano` cargado hasta que se les resetee
 o modifique la contraseña una vez.
+
+También, para poder transferirle el premio a cada jugador en caso de que
+gane, la tabla `jugadores` necesita guardar su Alias o CBU. Si no existe,
+correr:
+
+    ALTER TABLE jugadores ADD COLUMN alias_cbu text;
 """
 import base64
 import hashlib
@@ -62,7 +68,16 @@ sdk = mercadopago.SDK(st.secrets["MP_ACCESS_TOKEN"])
 def crear_preferencia_pago(jugador_id: int, nombre: str) -> str:
     """Crea una preferencia de pago (Checkout Pro) para un jugador y
     devuelve el link (init_point) al que hay que redirigirlo para pagar."""
-    base_url = st.secrets["MP_BASE_URL"]
+    base_url = st.secrets["MP_BASE_URL"].rstrip("/")
+    # IMPORTANTE: el back_url tiene que apuntar puntualmente a esta página
+    # (Boleta_digital), no a la raíz del sitio. La lógica que re-loguea al
+    # jugador y verifica el pago al volver de Mercado Pago vive acá, en
+    # 03_Boleta_digital.py, que Streamlit sirve en la ruta "/Boleta_digital"
+    # (nombre de archivo sin el prefijo numérico "03_" ni la extensión).
+    # Si el back_url apunta a "/", el usuario cae en el Home al volver, ese
+    # código nunca se ejecuta, y por eso queda deslogueado y sin la boleta
+    # marcada como paga.
+    pagina_boleta = f"{base_url}/Boleta_digital"
     preference_data = {
         "items": [{
             "title": f"Inscripción Prode - {nombre}",
@@ -72,9 +87,9 @@ def crear_preferencia_pago(jugador_id: int, nombre: str) -> str:
         }],
         "external_reference": str(jugador_id),
         "back_urls": {
-            "success": f"{base_url}/?pago=ok&jid={jugador_id}",
-            "pending": f"{base_url}/?pago=pendiente&jid={jugador_id}",
-            "failure": f"{base_url}/?pago=fallo&jid={jugador_id}",
+            "success": f"{pagina_boleta}/?pago=ok&jid={jugador_id}",
+            "pending": f"{pagina_boleta}/?pago=pendiente&jid={jugador_id}",
+            "failure": f"{pagina_boleta}/?pago=fallo&jid={jugador_id}",
         },
         "auto_return": "approved",
     }
@@ -246,6 +261,73 @@ st.markdown(
     .badge-pts { background:rgba(232,201,107,0.18);color:#e8c96b;   border-radius:10px; padding:3px 10px; font-size:0.72rem; margin-left:6px; }
     .badge-sin { background:rgba(148,163,184,0.15);color:#94a3b8;   border-radius:10px; padding:3px 10px; font-size:0.72rem; }
     .badge-admin { background:rgba(239,68,68,0.15);color:#f87171;   border-radius:10px; padding:2px 10px; font-size:0.72rem; }
+
+    /* ═══════════ TARJETA DE PERFIL — usuario + Alias/CBU (glass) ═══════════ */
+    .tarjeta-perfil {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 18px 24px;
+        margin-bottom: 22px;
+        border-radius: 20px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.02) 100%);
+        border: 1px solid rgba(232,201,107,0.25);
+        backdrop-filter: blur(22px) saturate(180%);
+        -webkit-backdrop-filter: blur(22px) saturate(180%);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+        overflow: hidden;
+    }
+    .tarjeta-perfil::before {
+        content: "";
+        position: absolute; inset: 0;
+        background: radial-gradient(circle at 0% 0%, rgba(232,201,107,0.16), transparent 55%);
+        pointer-events: none;
+    }
+    .tp-avatar {
+        flex-shrink: 0;
+        width: 54px; height: 54px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-family: 'Bebas Neue', sans-serif; font-size: 1.5rem; color: #0b0f19;
+        background: linear-gradient(135deg, #e8c96b 0%, #c9a54a 100%);
+        box-shadow: 0 4px 14px rgba(232,201,107,0.35);
+        position: relative; z-index: 1;
+    }
+    .tp-texto { position: relative; z-index: 1; }
+    .tp-saludo {
+        font-family: 'Inter', sans-serif; font-size: 0.72rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8;
+        margin: 0 0 2px 0;
+    }
+    .tp-nombre {
+        font-family: 'Bebas Neue', sans-serif; font-size: 1.5rem; color: #f1f5f9;
+        letter-spacing: 0.5px; line-height: 1.1; margin: 0;
+    }
+    .tp-username {
+        font-family: 'Inter', sans-serif; font-size: 0.82rem; color: #e8c96b;
+        margin: 2px 0 0 0;
+    }
+    .tp-chips {
+        margin-left: auto; flex-shrink: 0; position: relative; z-index: 1;
+        display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+    }
+    .tp-premio-chip {
+        display: flex; align-items: center; gap: 6px;
+        font-family: 'Inter', sans-serif; font-size: 0.72rem; font-weight: 600;
+        padding: 6px 14px; border-radius: 999px; white-space: nowrap;
+    }
+    .tp-premio-ok {
+        background: rgba(74,222,128,0.15); color: #4ade80;
+        border: 1px solid rgba(74,222,128,0.3);
+    }
+    .tp-premio-pendiente {
+        background: rgba(232,201,107,0.14); color: #e8c96b;
+        border: 1px solid rgba(232,201,107,0.3);
+    }
+    @media (max-width: 640px) {
+        .tarjeta-perfil { flex-wrap: wrap; }
+        .tp-chips { margin-left: 0; align-items: flex-start; }
+    }
 
     /* Selector 1/X/2 */
     .opcion-1x2 {
@@ -532,6 +614,7 @@ if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"
     if _params_mp.get("pago") == "ok":
         _cid = _params_mp.get("collection_id") or _params_mp.get("payment_id")
         if _cid and verificar_pago(_jid_mp, _cid):
+            st.session_state._recien_logueado = True
             st.success("✅ ¡Pago acreditado! Ya podés participar — bienvenido de nuevo.")
         else:
             st.warning(
@@ -645,6 +728,45 @@ with st.sidebar:
                             st.error(f"Error al crear la cuenta: {e}")
 
 
+def _mes_actual_boleta():
+    """
+    Determina el mes "actual" de juego para mostrarlo en la Boleta Mensual,
+    tomando la Fecha (jornada) del fixture más cercana a hoy —la que se está
+    jugando o la próxima— y buscando a qué mes está asignada esa Fecha en
+    `fecha_mes_map`: la MISMA tabla que ya usa el ranking mensual (ver la
+    pestaña "Meses" del admin). Devuelve (fecha_numero, mes) o (None, None)
+    si todavía no hay ninguna Fecha asignada a un mes.
+    """
+    try:
+        _partidos_m = sb.table("partidos").select("fecha_numero, fecha_partido").execute().data or []
+        _map_m = sb.table("fecha_mes_map").select("fecha_numero, mes").execute().data or []
+    except Exception:
+        return None, None
+
+    _mes_por_fn = {r["fecha_numero"]: r["mes"] for r in _map_m if r.get("mes")}
+    if not _mes_por_fn:
+        return None, None
+
+    hoy = datetime.now(TZ_ARG).date()
+    _fechas_por_fn = {}
+    for p in _partidos_m:
+        fn = p.get("fecha_numero")
+        fp = _parsear_fecha(p.get("fecha_partido"))
+        if fn is None or fp is None or fn not in _mes_por_fn:
+            continue
+        _fechas_por_fn.setdefault(fn, []).append(fp)
+
+    mejor_fn, mejor_dist = None, None
+    for fn, fechas in _fechas_por_fn.items():
+        dist = min(abs((fp - hoy).days) for fp in fechas)
+        if mejor_dist is None or dist < mejor_dist:
+            mejor_dist, mejor_fn = dist, fn
+
+    if mejor_fn is None:
+        return None, None
+    return mejor_fn, _mes_por_fn[mejor_fn]
+
+
 if st.session_state._recien_logueado:
     st.session_state._recien_logueado = False
     _cerrar_sidebar_automaticamente()
@@ -661,6 +783,89 @@ if not sesion_activa:
         "para acceder a la Boleta Digital."
     )
     st.stop()
+
+# ══════════════════════════════════════════════════════════════════════════
+# TARJETA DE PERFIL — nombre de usuario + Alias/CBU para poder cobrar el
+# premio si gana. Solo se muestra a jugadores (no al admin, que no cobra
+# premio). El admin puede ver/editar el Alias/CBU de cada uno desde la
+# pestaña "Jugadores" para transferirle el premio a quien gane.
+# ══════════════════════════════════════════════════════════════════════════
+if st.session_state.jugador_id and not st.session_state.es_admin:
+    _perfil_db = (
+        sb.table("jugadores")
+        .select("nombre, username, alias_cbu, pagado")
+        .eq("id", st.session_state.jugador_id)
+        .execute()
+        .data
+    )
+    _perfil = _perfil_db[0] if _perfil_db else {}
+    _alias_actual = (_perfil.get("alias_cbu") or "").strip()
+    _iniciales = "".join(p[0] for p in _perfil.get("nombre", "?").split()[:2]).upper() or "?"
+
+    if _alias_actual:
+        _chip_alias_html = '<div class="tp-premio-chip tp-premio-ok">✅ Alias/CBU cargado</div>'
+    else:
+        _chip_alias_html = '<div class="tp-premio-chip tp-premio-pendiente">⚠️ Falta cargar Alias/CBU</div>'
+
+    # ── Boleta Mensual: mes actual (mismo origen que el ranking mensual) ──
+    # El estado PAGA/PENDIENTE se toma del mismo campo `pagado` que ya usa
+    # el resto de la app para la inscripción — no hay un pago "por mes"
+    # aparte, es la misma boleta paga la que habilita todos los meses.
+    _fn_mes_actual, _mes_actual = _mes_actual_boleta()
+    _chip_mes_html = ""
+    if _mes_actual:
+        _mensual_pagada = bool(_perfil.get("pagado"))
+        _clase_mes = "tp-premio-ok" if _mensual_pagada else "tp-premio-pendiente"
+        _icono_mes = "✅" if _mensual_pagada else "⏳"
+        _estado_mes = "PAGA" if _mensual_pagada else "PENDIENTE"
+        _chip_mes_html = (
+            f'<div class="tp-premio-chip {_clase_mes}">{_icono_mes} '
+            f'Boleta {_mes_actual.upper()} · {_estado_mes}</div>'
+        )
+
+    st.markdown(
+        f"""
+        <div class="tarjeta-perfil">
+            <div class="tp-avatar">{_iniciales}</div>
+            <div class="tp-texto">
+                <p class="tp-saludo">Sesión iniciada</p>
+                <p class="tp-nombre">{_perfil.get('nombre', st.session_state.jugador_nombre)}</p>
+                <p class="tp-username">@{_perfil.get('username', '')}</p>
+            </div>
+            <div class="tp-chips">
+                {_chip_alias_html}
+                {_chip_mes_html}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander(
+        "💸 Alias / CBU para cobrar el premio" if not _alias_actual
+        else "💸 Alias / CBU para cobrar el premio (ya cargado, tocá para editar)",
+        expanded=not _alias_actual,
+    ):
+        st.caption(
+            "Cargá tu Alias o CBU de Mercado Pago / banco. Es lo que el admin va "
+            "a usar para transferirte el premio si ganás, así que revisalo bien "
+            "antes de guardar."
+        )
+        with st.form("form_alias_cbu"):
+            _alias_input = st.text_input(
+                "Alias o CBU", value=_alias_actual, placeholder="Ej: juan.perez.mp",
+                key="input_alias_cbu",
+            )
+            _guardar_alias = st.form_submit_button("💾 Guardar Alias/CBU", use_container_width=True)
+            if _guardar_alias:
+                if not _alias_input.strip():
+                    st.warning("Escribí un Alias o CBU antes de guardar.")
+                else:
+                    sb.table("jugadores").update(
+                        {"alias_cbu": _alias_input.strip()}
+                    ).eq("id", st.session_state.jugador_id).execute()
+                    st.toast("Alias/CBU guardado.", icon="💾")
+                    st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════
 # GATEO POR PAGO Y POR ESTADO — un jugador (no-admin) solo entra si pagó.
@@ -713,7 +918,7 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
 
             st.markdown(
                 f"""
-                <a href="{link_pago}" target="_blank" rel="noopener noreferrer"
+                <a href="{link_pago}" rel="noopener noreferrer"
                    style="
                         display:flex; align-items:center; justify-content:center;
                         gap:10px; width:100%; box-sizing:border-box;
@@ -1934,7 +2139,7 @@ with tab_jugadores:
     try:
         jugadores_resp = (
             sb.table("jugadores")
-            .select("id, nombre, username, password_plano, pagado, activo")
+            .select("id, nombre, username, password_plano, pagado, activo, alias_cbu")
             .order("nombre")
             .execute()
         )
@@ -1970,6 +2175,25 @@ with tab_jugadores:
                     st.error("💰 Inscripción NO pagada")
                     if st.button("✅ Marcar como pagada (manual)", key=f"pagar_{j['id']}"):
                         sb.table("jugadores").update({"pagado": True}).eq("id", j["id"]).execute()
+                        st.rerun()
+
+                # ── Alias/CBU para transferir el premio si gana ───────────
+                st.caption("💸 Alias / CBU para transferir el premio")
+                _alias_admin_actual = (j.get("alias_cbu") or "").strip()
+                if _alias_admin_actual:
+                    st.code(_alias_admin_actual, language=None)
+                else:
+                    st.caption("Todavía no cargó Alias/CBU.")
+                with st.form(f"form_alias_admin_{j['id']}"):
+                    _nuevo_alias_admin = st.text_input(
+                        "Corregir Alias/CBU", value=_alias_admin_actual,
+                        key=f"alias_admin_{j['id']}",
+                    )
+                    if st.form_submit_button("💾 Guardar Alias/CBU"):
+                        sb.table("jugadores").update(
+                            {"alias_cbu": _nuevo_alias_admin.strip()}
+                        ).eq("id", j["id"]).execute()
+                        st.toast(f"Alias/CBU de {j['nombre']} actualizado.", icon="💾")
                         st.rerun()
 
                 # ── Ocultar/pausar manualmente (sin eliminar) ─────────────
