@@ -620,16 +620,45 @@ with st.sidebar:
         st.session_state.mostrar_login_admin = False
 
     if not st.session_state.admin_logueado:
-        # Ícono chiquito y discreto, sin texto que indique que hay un panel
-        # de admin. Nadie que no sepa que existe va a notarlo ni tocarlo.
+        # Ícono chiquito y discreto, pegado abajo de todo en el sidebar
+        # (sticky), sin recuadro ni fondo — solo el símbolo. Nadie que no
+        # sepa que existe un panel de admin va a notarlo ni tocarlo.
         st.markdown(
-            "<div style='margin-top: 3rem;'></div>",
+            """
+            <style>
+            .st-key-gear_toggle_btn {
+                position: sticky;
+                bottom: 0.4rem;
+                display: flex;
+                justify-content: flex-end;
+                margin-top: 2rem;
+            }
+            .st-key-gear_toggle_btn button {
+                background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+                padding: 0.1rem 0.35rem !important;
+                min-height: unset !important;
+                color: rgba(255, 255, 255, 0.28) !important;
+                font-size: 1.05rem !important;
+                line-height: 1 !important;
+            }
+            .st-key-gear_toggle_btn button:hover {
+                color: rgba(255, 255, 255, 0.65) !important;
+                background: transparent !important;
+            }
+            .st-key-gear_toggle_btn button:focus:not(:active) {
+                color: rgba(255, 255, 255, 0.65) !important;
+                box-shadow: none !important;
+            }
+            </style>
+            """,
             unsafe_allow_html=True,
         )
-        _col_vacia, _col_gear = st.columns([10, 1])
-        with _col_gear:
-            if st.button("⚙", key="gear_toggle_btn"):
-                st.session_state.mostrar_login_admin = not st.session_state.mostrar_login_admin
+        if st.button("⚙", key="gear_toggle_btn"):
+            st.session_state.mostrar_login_admin = not st.session_state.mostrar_login_admin
 
         if st.session_state.mostrar_login_admin:
             _pwd_ingresada = st.text_input(
