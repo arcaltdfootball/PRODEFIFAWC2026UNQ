@@ -74,7 +74,7 @@ ADMIN_PASSWORD = "aleotero"
 
 DEFAULT_AVISOS = [
     "En la Boleta Digital de AGOSTO se juegan las fechas: 3 / 4 / 5 / 6 / 7.",
-    "FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. Sistema de puntaje: 1 punto si acierta la Condición (Local / Empate / Visitante) · 3 puntos en total si acierta el Resultado exacto.",
+    "FECHA 5 (Cinco) SE JUEGA FECHA EXTRAORDINARIA con MARCADOR EXACTO. Sistema de puntaje: 1 punto por acertar el resultado (Local / Empate / Visitante) · 3 puntos en total si acertás el resultado exacto.",
 ]
 
 DEFAULT_TARJETAS = [
@@ -614,23 +614,43 @@ if TARJETAS_INFO:
 # los usuarios apenas se recarga la página.
 # ══════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## 🔐 Panel Admin")
-
     if "admin_logueado" not in st.session_state:
         st.session_state.admin_logueado = False
+    if "mostrar_login_admin" not in st.session_state:
+        st.session_state.mostrar_login_admin = False
 
     if not st.session_state.admin_logueado:
-        _pwd_ingresada = st.text_input("Contraseña", type="password", key="admin_pwd_input")
-        if st.button("Ingresar", key="admin_login_btn"):
-            if _pwd_ingresada == ADMIN_PASSWORD:
-                st.session_state.admin_logueado = True
-                st.rerun()
-            else:
-                st.error("Contraseña incorrecta.")
+        # Ícono chiquito y discreto, sin texto que indique que hay un panel
+        # de admin. Nadie que no sepa que existe va a notarlo ni tocarlo.
+        st.markdown(
+            "<div style='margin-top: 3rem;'></div>",
+            unsafe_allow_html=True,
+        )
+        _col_vacia, _col_gear = st.columns([10, 1])
+        with _col_gear:
+            if st.button("⚙", key="gear_toggle_btn"):
+                st.session_state.mostrar_login_admin = not st.session_state.mostrar_login_admin
+
+        if st.session_state.mostrar_login_admin:
+            _pwd_ingresada = st.text_input(
+                "Contraseña",
+                type="password",
+                key="admin_pwd_input",
+                label_visibility="collapsed",
+                placeholder="Contraseña",
+            )
+            if st.button("Ingresar", key="admin_login_btn"):
+                if _pwd_ingresada == ADMIN_PASSWORD:
+                    st.session_state.admin_logueado = True
+                    st.session_state.mostrar_login_admin = False
+                    st.rerun()
+                else:
+                    st.error("Contraseña incorrecta.")
     else:
         st.success("Sesión de admin activa ✅")
         if st.button("Cerrar sesión", key="admin_logout_btn"):
             st.session_state.admin_logueado = False
+            st.session_state.mostrar_login_admin = False
             st.session_state.pop("avisos_edit", None)
             st.session_state.pop("tarjetas_edit", None)
             st.rerun()
