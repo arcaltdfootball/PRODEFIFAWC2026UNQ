@@ -394,10 +394,100 @@ st.markdown(
         65%  { transform: scale(1.09); }
         100% { transform: scale(1.045); }
     }
+
+    /* ═══════════ BOTÓN FLOTANTE DE WHATSAPP (contacto al admin) ═══════════ */
+    .wsp-flotante {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        z-index: 999999;
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(150deg, #25D366 0%, #128C7E 100%);
+        box-shadow: 0 6px 20px rgba(18,140,126,0.45), 0 2px 8px rgba(0,0,0,0.35),
+                    inset 0 1px 0 rgba(255,255,255,0.25);
+        text-decoration: none !important;
+        border: 1px solid rgba(255,255,255,0.18);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        transition: transform 0.22s cubic-bezier(.34,1.56,.64,1),
+                    box-shadow 0.22s ease;
+        animation: wsp-pulso 2.6s ease-in-out infinite;
+    }
+    .wsp-flotante:hover {
+        transform: scale(1.08) translateY(-2px);
+        box-shadow: 0 10px 28px rgba(18,140,126,0.55), 0 4px 12px rgba(0,0,0,0.4),
+                    inset 0 1px 0 rgba(255,255,255,0.3);
+    }
+    .wsp-flotante:active { transform: scale(0.95); }
+    .wsp-flotante svg { width: 30px; height: 30px; display: block; }
+    @keyframes wsp-pulso {
+        0%, 100% { box-shadow: 0 6px 20px rgba(18,140,126,0.45), 0 2px 8px rgba(0,0,0,0.35),
+                                inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 0 rgba(37,211,102,0.45); }
+        50%      { box-shadow: 0 6px 20px rgba(18,140,126,0.45), 0 2px 8px rgba(0,0,0,0.35),
+                                inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 10px rgba(37,211,102,0); }
+    }
+    .wsp-tooltip {
+        position: fixed;
+        right: 90px;
+        bottom: 36px;
+        z-index: 999998;
+        background: rgba(17,24,39,0.92);
+        color: #f1f5f9;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 8px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.1);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+    }
+    .wsp-flotante:hover + .wsp-tooltip { opacity: 1; }
+    @media (max-width: 640px) {
+        .wsp-flotante { right: 14px; bottom: 16px; width: 52px; height: 52px; }
+        .wsp-flotante svg { width: 27px; height: 27px; }
+        .wsp-tooltip { display: none; }
+    }
     </style>
     """.replace("__FONDO_AFA2026__", _FONDO_AFA2026),
     unsafe_allow_html=True,
 )
+
+# ── Botón flotante de WhatsApp (contacto al admin) ─────────────────────────
+# Configurable desde secrets.toml:
+#   WHATSAPP_ADMIN_NUMERO = "5491122334455"   (con código de país, sin "+" ni espacios)
+#   WHATSAPP_ADMIN_MENSAJE = "Hola! te escribo por el Prode..."   (opcional)
+_WSP_NUMERO = st.secrets.get("WHATSAPP_ADMIN_NUMERO", "").strip()
+if _WSP_NUMERO:
+    _WSP_MENSAJE = st.secrets.get(
+        "WHATSAPP_ADMIN_MENSAJE", "Hola! Te escribo por el Prode Liga Profesional 👋"
+    )
+    from urllib.parse import quote as _wsp_quote
+    _wsp_link = f"https://wa.me/{_WSP_NUMERO}?text={_wsp_quote(_WSP_MENSAJE)}"
+    st.markdown(
+        f"""
+        <a href="{_wsp_link}" target="_blank" rel="noopener noreferrer" class="wsp-flotante" aria-label="Contactar al administrador por WhatsApp">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2C6.48 2 2 6.36 2 11.75c0 1.96.58 3.78 1.58 5.32L2 22l5.09-1.53a10.1 10.1 0 0 0 4.91 1.28c5.52 0 10-4.36 10-9.75S17.52 2 12 2Z"
+                      fill="#ffffff"/>
+                <path d="M8.2 7.9c.24-.53.5-.54.72-.55l.6-.01c.2 0 .46-.01.7.55.24.55.83 1.95.9 2.09.07.14.12.31.02.5-.1.19-.15.31-.3.47-.15.17-.31.37-.44.5-.15.14-.3.3-.13.6.17.3.75 1.25 1.62 2.03 1.11 1 2.05 1.32 2.35 1.47.3.15.48.13.65-.08.18-.2.75-.88.95-1.19.2-.3.4-.25.67-.15.28.1 1.76.84 2.06.99.3.15.5.23.57.35.08.13.08.75-.18 1.47-.25.72-1.46 1.4-2.02 1.48-.55.09-1.05.29-3.53-.75-2.99-1.25-4.88-4.3-5.03-4.5-.14-.2-1.2-1.6-1.2-3.05 0-1.46.76-2.17 1.03-2.47Z"
+                      fill="#25D366"/>
+            </svg>
+        </a>
+        <div class="wsp-tooltip">Consultale al admin 💬</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 try:
     sb = conectar()
