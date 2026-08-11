@@ -780,11 +780,23 @@ elif (
                 if (sessionStorage.getItem('prode_recuperando_pago')) return;
                 sessionStorage.setItem('prode_recuperando_pago', '1');
 
-                var win = window.parent || window;
-                var url = new URL(win.location.href);
+                var url = new URL(window.parent.location.href);
                 url.searchParams.set('pago', 'recuperar');
                 url.searchParams.set('jid', data.jid);
-                win.location.href = url.toString();
+                var destino = url.toString();
+
+                // El iframe de components.html está "sandboxeado" y el
+                // navegador bloquea que navegue directamente a la página
+                // padre (aunque tengamos allow-same-origin, no tenemos
+                // allow-top-navigation). Como sí tenemos acceso al DOM
+                // de la página padre por ser mismo origen, inyectamos un
+                // <script> ahí: ese script pasa a correr COMO PARTE de
+                // la página principal (ya no dentro del iframe
+                // sandboxeado), y desde ahí sí puede redirigir sin que
+                // el navegador lo bloquee.
+                var s = window.parent.document.createElement("script");
+                s.textContent = "window.location.href = " + JSON.stringify(destino) + ";";
+                window.parent.document.head.appendChild(s);
             } catch (e) {}
         })();
         </script>
