@@ -65,7 +65,7 @@ from escudos_map import url_escudo
 sdk = mercadopago.SDK(st.secrets["MP_ACCESS_TOKEN"])
 
 
-def crear_preferencia_pago(jugador_id: int, nombre: str) -> str:
+def crear_preferencia_pago(jugador_id, nombre: str) -> str:
     """Crea una preferencia de pago (Checkout Pro) para un jugador y
     devuelve el link (init_point) al que hay que redirigirlo para pagar."""
     base_url = st.secrets["MP_BASE_URL"].rstrip("/")
@@ -99,7 +99,7 @@ def crear_preferencia_pago(jugador_id: int, nombre: str) -> str:
     return pref["init_point"]
 
 
-def verificar_pago(jugador_id: int, payment_id: str) -> bool:
+def verificar_pago(jugador_id, payment_id: str) -> bool:
     """Consulta el estado real del pago contra la API de Mercado Pago
     (nunca confiar solo en los parámetros que vienen en la URL de retorno)."""
     try:
@@ -119,7 +119,7 @@ def verificar_pago(jugador_id: int, payment_id: str) -> bool:
     return False
 
 
-def verificar_pago_por_referencia(jugador_id: int) -> bool:
+def verificar_pago_por_referencia(jugador_id) -> bool:
     """Verificación de RESPALDO que no depende de que el navegador haya
     vuelto limpio desde Mercado Pago con los parámetros en la URL.
 
@@ -641,11 +641,23 @@ def _cerrar_sidebar_automaticamente():
 # ══════════════════════════════════════════════════════════════════════════
 _params_mp = st.query_params
 if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"):
-    _jid_mp = int(_params_mp["jid"])
+    # OJO: el id de `jugadores` en Supabase es un UUID (ej.
+    # "90c5ba31-04e9-4dfe-8848-232ffdc563c0"), NO un entero. Antes acá se
+    # forzaba `int(...)`, lo cual tira ValueError apenas MP vuelve con un
+    # jid real y hace que la página quede colgada/rota — el usuario paga,
+    # MP intenta redirigirlo solo, y esta excepción corta la ejecución
+    # antes de que el resto del script (login, verificación de pago, UI)
+    # llegue siquiera a correr. Por eso el "vuelve solo" nunca funcionaba
+    # de verdad para nadie, aunque el link estuviera bien armado.
+    _jid_mp = _params_mp["jid"]
 
     # Restauramos la sesión del jugador para que no tenga que volver a
     # loguearse a mano y pueda seguir jugando directo.
-    _jrow_mp = sb.table("jugadores").select("id, nombre").eq("id", _jid_mp).execute().data
+    try:
+        _jrow_mp = sb.table("jugadores").select("id, nombre").eq("id", _jid_mp).execute().data
+    except Exception:
+        _jrow_mp = None
+
     if _jrow_mp:
         st.session_state.jugador_id = _jrow_mp[0]["id"]
         st.session_state.jugador_nombre = _jrow_mp[0]["nombre"]
@@ -653,13 +665,31 @@ if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"
 
     if _params_mp.get("pago") == "ok":
         _cid = _params_mp.get("collection_id") or _params_mp.get("payment_id")
-        if _cid and verificar_pago(_jid_mp, _cid):
+        _pago_confirmado = False
+        if _cid:
+            try:
+                _pago_confirmado = verificar_pago(_jid_mp, _cid)
+            except Exception:
+                _pago_confirmado = False
+        if not _pago_confirmado:
+            # Respaldo inmediato: si por lo que sea el chequeo por
+            # payment_id falla (token vencido, demora de MP en propagar
+            # el estado, etc.), probamos también por external_reference
+            # antes de resignarnos a mostrarle el cartel de "no pudimos
+            # confirmar" a alguien que sí pagó.
+            try:
+                _pago_confirmado = verificar_pago_por_referencia(_jid_mp)
+            except Exception:
+                _pago_confirmado = False
+
+        if _pago_confirmado:
             st.session_state._recien_logueado = True
             st.success("✅ ¡Pago acreditado! Ya podés participar — bienvenido de nuevo.")
         else:
             st.warning(
                 "No pudimos confirmar el pago todavía. Si ya pagaste, esperá "
-                "unos segundos y volvé a entrar."
+                "unos segundos y volvé a entrar, o usá el botón "
+                "'Ya pagué, verificar ahora' más abajo."
             )
     elif _params_mp.get("pago") == "pendiente":
         st.info("⏳ Tu pago está pendiente de acreditación. Volvé a entrar en unos minutos.")
