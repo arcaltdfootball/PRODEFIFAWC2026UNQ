@@ -640,7 +640,7 @@ def _cerrar_sidebar_automaticamente():
 # navegador y Streamlit pierde el session_state (el login) al volver.
 # ══════════════════════════════════════════════════════════════════════════
 _params_mp = st.query_params
-if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"):
+if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo", "recuperar"):
     # OJO: el id de `jugadores` en Supabase es un UUID (ej.
     # "90c5ba31-04e9-4dfe-8848-232ffdc563c0"), NO un entero. Antes acá se
     # forzaba `int(...)`, lo cual tira ValueError apenas MP vuelve con un
@@ -695,8 +695,85 @@ if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"
         st.info("⏳ Tu pago está pendiente de acreditación. Volvé a entrar en unos minutos.")
     elif _params_mp.get("pago") == "fallo":
         st.error("❌ El pago no se pudo procesar. Podés intentarlo de nuevo desde acá abajo.")
+    elif _params_mp.get("pago") == "recuperar":
+        # Llegamos acá por la red de seguridad de localStorage (más abajo
+        # en el script), NO por un back_url real de Mercado Pago: pasa
+        # cuando el navegador/app que usó el jugador para "volver al
+        # sitio" perdió los parámetros de la URL en el camino (frecuente
+        # en algunos navegadores in-app de Android). No tenemos
+        # payment_id acá, así que vamos directo a preguntarle a la API
+        # de MP si hay un pago aprobado para este jugador.
+        try:
+            _pago_confirmado = verificar_pago_por_referencia(_jid_mp)
+        except Exception:
+            _pago_confirmado = False
+        if _pago_confirmado:
+            st.session_state._recien_logueado = True
+            st.success("✅ ¡Pago acreditado! Ya podés participar — bienvenido de nuevo.")
+        else:
+            st.info(
+                "Te volvimos a loguear automáticamente. Si ya pagaste, puede "
+                "tardar unos segundos en acreditarse — usá el botón "
+                "'Ya pagué, verificar ahora' más abajo si hace falta."
+            )
+
+    # Ya procesamos el retorno (con o sin pago confirmado): borramos el
+    # aviso guardado en localStorage para que la red de seguridad de más
+    # abajo no siga insistiendo en recargar la página en cada visita.
+    components.html(
+        """
+        <script>
+        try { localStorage.removeItem('prode_pago_pendiente'); } catch (e) {}
+        </script>
+        """,
+        height=0,
+    )
 
     st.query_params.clear()
+elif not st.session_state.jugador_id and not st.session_state.es_admin:
+    # ── Red de seguridad extra ──────────────────────────────────────────
+    # Nadie logueado y la URL actual no trae parámetros de Mercado Pago.
+    # Puede ser simplemente alguien entrando de cero, pero también puede
+    # ser un jugador que volvió de pagar y cuyo navegador/app perdió el
+    # query string en el camino (pasa en algunos navegadores in-app o
+    # apps bancarias en Android antes de abrir el link externo).
+    #
+    # Como respaldo, si en ESTE MISMO navegador quedó guardado en
+    # localStorage el jid de un pago iniciado hace poco (lo guardamos
+    # nosotros mismos, más abajo, justo antes de mandarlo a pagar), lo
+    # recuperamos y recargamos la página agregando ese jid a la URL para
+    # que el bloque de arriba pueda re-loguearlo y verificar el pago
+    # automáticamente, sin que tenga que volver a escribir usuario y
+    # contraseña.
+    components.html(
+        """
+        <script>
+        (function () {
+            try {
+                var raw = localStorage.getItem('prode_pago_pendiente');
+                if (!raw) return;
+                var data = JSON.parse(raw);
+                var unaHora = 60 * 60 * 1000;
+                if (!data.jid || !data.ts || (Date.now() - data.ts) > unaHora) {
+                    localStorage.removeItem('prode_pago_pendiente');
+                    return;
+                }
+                // Evitamos loops: solo intentamos la recuperación una
+                // vez por pestaña/sesión de navegador.
+                if (sessionStorage.getItem('prode_recuperando_pago')) return;
+                sessionStorage.setItem('prode_recuperando_pago', '1');
+
+                var win = window.parent || window;
+                var url = new URL(win.location.href);
+                url.searchParams.set('pago', 'recuperar');
+                url.searchParams.set('jid', data.jid);
+                win.location.href = url.toString();
+            } catch (e) {}
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 sesion_activa = st.session_state.es_admin or st.session_state.jugador_id is not None
 
@@ -1001,6 +1078,26 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
                     st.session_state.jugador_id, st.session_state.jugador_nombre
                 )
             link_pago = st.session_state[_link_key]
+
+            # Guardamos el jid en localStorage ANTES de que el jugador se
+            # vaya a Mercado Pago. Es la red de seguridad para cuando el
+            # "volver al sitio" de MP (sobre todo desde su app en
+            # Android) llega sin los parámetros de la URL: al volver
+            # "en frío", el bloque de arriba lo detecta acá guardado y
+            # recupera la sesión igual, sin necesidad de loguearse a mano.
+            components.html(
+                f"""
+                <script>
+                try {{
+                    localStorage.setItem('prode_pago_pendiente', JSON.stringify({{
+                        jid: "{st.session_state.jugador_id}",
+                        ts: Date.now()
+                    }}));
+                }} catch (e) {{}}
+                </script>
+                """,
+                height=0,
+            )
 
             st.markdown(
                 f"""
