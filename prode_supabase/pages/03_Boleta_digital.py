@@ -2218,7 +2218,7 @@ with tab_jugadores:
     try:
         jugadores_resp = (
             sb.table("jugadores")
-            .select("id, nombre, username, password_plano, pagado, activo, alias_cbu")
+            .select("id, nombre, username, password_plano, pagado, activo, alias_cbu, mp_payment_id")
             .order("nombre")
             .execute()
         )
@@ -2247,11 +2247,44 @@ with tab_jugadores:
                 # ── Estado de pago (marcar manual, ej. pagó en efectivo) ──
                 if _pago_ok:
                     st.success("💰 Inscripción pagada")
+                    if j.get("mp_payment_id"):
+                        st.caption(f"ID de pago en MP: `{j['mp_payment_id']}`")
                     if st.button("↩️ Marcar como NO pagada", key=f"despagar_{j['id']}"):
                         sb.table("jugadores").update({"pagado": False}).eq("id", j["id"]).execute()
                         st.rerun()
                 else:
                     st.error("💰 Inscripción NO pagada")
+
+                    # Chequeo real contra Mercado Pago: para el caso de un
+                    # jugador que dice haber pagado pero el redirect nunca
+                    # lo confirmó (WhatsApp/Instagram/Safari/app del banco
+                    # que no vuelven bien al sitio). Este botón busca en la
+                    # API de MP cualquier pago aprobado con
+                    # external_reference = id de este jugador, sin importar
+                    # qué haya pasado con la vuelta del navegador.
+                    if st.button(
+                        "🔄 Verificar pago en Mercado Pago",
+                        key=f"verificar_mp_{j['id']}",
+                        help="Le pregunta directo a Mercado Pago si hay un "
+                             "pago aprobado a nombre de este jugador, sin "
+                             "depender de que el redirect haya funcionado.",
+                    ):
+                        with st.spinner("Consultando con Mercado Pago..."):
+                            if verificar_pago_por_referencia(j["id"]):
+                                st.success(
+                                    f"✅ Encontramos un pago aprobado a nombre de "
+                                    f"{j['nombre']}. Se marcó como pagada."
+                                )
+                                st.rerun()
+                            else:
+                                st.warning(
+                                    "No encontramos ningún pago aprobado con este "
+                                    "jugador como referencia en Mercado Pago. Si "
+                                    "estás seguro/a de que pagó (ej. por otro "
+                                    "medio, transferencia directa, efectivo), "
+                                    "usá el botón de abajo para marcarlo a mano."
+                                )
+
                     if st.button("✅ Marcar como pagada (manual)", key=f"pagar_{j['id']}"):
                         sb.table("jugadores").update({"pagado": True}).eq("id", j["id"]).execute()
                         st.rerun()
