@@ -144,10 +144,18 @@ def verificar_pago(jugador_id, payment_id: str) -> bool:
         pago.get("status") == "approved"
         and str(pago.get("external_reference")) == str(jugador_id)
     ):
-        sb.table("jugadores").update({
-            "pagado": True,
-            "mp_payment_id": payment_id,
-        }).eq("id", jugador_id).execute()
+        try:
+            _con_timeout(
+                lambda: sb.table("jugadores").update({
+                    "pagado": True,
+                    "mp_payment_id": payment_id,
+                }).eq("id", jugador_id).execute(),
+                timeout=8,
+            )
+        except Exception:
+            pass  # el pago SÍ está confirmado en MP; si Supabase falla acá,
+            # igual devolvemos True — la auto-cura de más abajo lo va a
+            # volver a intentar marcar en el próximo ingreso.
         return True
     return False
 
@@ -187,10 +195,16 @@ def verificar_pago_por_referencia(jugador_id) -> bool:
             pago.get("status") == "approved"
             and str(pago.get("external_reference")) == str(jugador_id)
         ):
-            sb.table("jugadores").update({
-                "pagado": True,
-                "mp_payment_id": pago.get("id"),
-            }).eq("id", jugador_id).execute()
+            try:
+                _con_timeout(
+                    lambda: sb.table("jugadores").update({
+                        "pagado": True,
+                        "mp_payment_id": pago.get("id"),
+                    }).eq("id", jugador_id).execute(),
+                    timeout=8,
+                )
+            except Exception:
+                pass
             return True
     return False
 
@@ -698,9 +712,13 @@ if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"
     _jid_mp = _params_mp["jid"]
 
     # Restauramos la sesión del jugador para que no tenga que volver a
-    # loguearse a mano y pueda seguir jugando directo.
+    # loguearse a mano y pueda seguir jugando directo. Con timeout: si
+    # Supabase no contesta rápido, no nos quedamos colgados acá tampoco.
     try:
-        _jrow_mp = sb.table("jugadores").select("id, nombre").eq("id", _jid_mp).execute().data
+        _jrow_mp = _con_timeout(
+            lambda: sb.table("jugadores").select("id, nombre").eq("id", _jid_mp).execute().data,
+            timeout=8,
+        )
     except Exception:
         _jrow_mp = None
 
