@@ -574,6 +574,16 @@ def _badge_signo(signo):
 # ══════════════════════════════════════════════════════════════════════════
 # ESTADO DE SESIÓN
 # ══════════════════════════════════════════════════════════════════════════
+# Marcador para saber si esta es la PRIMERA corrida del script en esta
+# sesión de navegador (recién abrió/recargó la página) o si es un rerun
+# interno posterior (por ejemplo, el que dispara "Cerrar sesión" con
+# st.rerun(), que NO recarga el navegador). Lo necesitamos para que la
+# red de seguridad de recuperación de pago (más abajo) solo intente
+# redirigir en una carga de página realmente nueva, y no se "gaste" su
+# único intento en un rerun interno donde el usuario ni se enteró.
+_es_primera_carga_de_sesion = "_visita_inicial_procesada" not in st.session_state
+st.session_state["_visita_inicial_procesada"] = True
+
 for key, default in [
     ("es_admin", False),
     ("jugador_id", None),
@@ -730,13 +740,20 @@ if "jid" in _params_mp and _params_mp.get("pago") in ("ok", "pendiente", "fallo"
     )
 
     st.query_params.clear()
-elif not st.session_state.jugador_id and not st.session_state.es_admin:
+elif (
+    _es_primera_carga_de_sesion
+    and not st.session_state.jugador_id
+    and not st.session_state.es_admin
+):
     # ── Red de seguridad extra ──────────────────────────────────────────
-    # Nadie logueado y la URL actual no trae parámetros de Mercado Pago.
-    # Puede ser simplemente alguien entrando de cero, pero también puede
-    # ser un jugador que volvió de pagar y cuyo navegador/app perdió el
-    # query string en el camino (pasa en algunos navegadores in-app o
-    # apps bancarias en Android antes de abrir el link externo).
+    # Nadie logueado, la URL actual no trae parámetros de Mercado Pago, Y
+    # esta es la primera corrida del script en esta sesión de navegador
+    # (recién se abrió/recargó la página — NO un rerun interno como el
+    # que dispara "Cerrar sesión"). Puede ser simplemente alguien
+    # entrando de cero, pero también puede ser un jugador que volvió de
+    # pagar y cuyo navegador/app perdió el query string en el camino
+    # (pasa en algunos navegadores in-app o apps bancarias en Android
+    # antes de abrir el link externo).
     #
     # Como respaldo, si en ESTE MISMO navegador quedó guardado en
     # localStorage el jid de un pago iniciado hace poco (lo guardamos
