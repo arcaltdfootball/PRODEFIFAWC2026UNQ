@@ -119,6 +119,46 @@ def verificar_pago(jugador_id: int, payment_id: str) -> bool:
     return False
 
 
+def verificar_pago_por_referencia(jugador_id: int) -> bool:
+    """Verificación de RESPALDO que no depende de que el navegador haya
+    vuelto limpio desde Mercado Pago con los parámetros en la URL.
+
+    El flujo normal (`verificar_pago`) necesita el `payment_id` que viaja
+    en el query string del back_url. En el celular eso se pierde seguido
+    (el navegador in-app de WhatsApp/Instagram, Safari, o la app del banco
+    a veces no vuelven bien, o el usuario cierra la pestaña de MP a mano
+    antes de que redirija) y ahí el jugador pagó de verdad pero el sistema
+    nunca se entera.
+
+    Esta función no necesita ningún dato de la URL: le pregunta directo a
+    la API de Mercado Pago "¿hay algún pago aprobado con este
+    external_reference (= id del jugador)?". Si lo encuentra, marca
+    `pagado = True` igual que el flujo normal. Se puede llamar tanto
+    automáticamente (auto-cura al cargar la página) como a mano (botón
+    "Ya pagué, verificar ahora")."""
+    try:
+        resultado = sdk.payment().search({
+            "external_reference": str(jugador_id),
+            "sort": "date_created",
+            "criteria": "desc",
+        })
+        pagos = (resultado.get("response") or {}).get("results", [])
+    except Exception:
+        return False
+
+    for pago in pagos:
+        if (
+            pago.get("status") == "approved"
+            and str(pago.get("external_reference")) == str(jugador_id)
+        ):
+            sb.table("jugadores").update({
+                "pagado": True,
+                "mp_payment_id": pago.get("id"),
+            }).eq("id", jugador_id).execute()
+            return True
+    return False
+
+
 @st.cache_data(show_spinner=False)
 def _fondo_pagina_datauri():
     """
@@ -904,6 +944,22 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
             st.stop()
 
     if not _pagado:
+        # ── Auto-cura silenciosa ────────────────────────────────────────
+        # Antes de mostrarle el cartel de "todavía no pagaste", chequeamos
+        # de respaldo contra la API de Mercado Pago por si el jugador ya
+        # pagó pero el redirect de vuelta nunca se completó bien (celular,
+        # navegador in-app, cierre manual de la pestaña de MP, etc.). Se
+        # hace UNA sola vez por sesión para no golpear la API de MP en
+        # cada rerun de Streamlit; el botón manual de abajo permite
+        # reintentar las veces que haga falta.
+        _autoverif_key = f"_autoverificado_pago_{st.session_state.jugador_id}"
+        if not st.session_state.get(_autoverif_key):
+            st.session_state[_autoverif_key] = True
+            if verificar_pago_por_referencia(st.session_state.jugador_id):
+                st.success("✅ ¡Pago acreditado! Ya podés participar — bienvenido de nuevo.")
+                st.balloons()
+                st.rerun()
+
         st.warning(
             "⚠️ Todavía no registramos tu pago de inscripción. "
             "Pagá para poder cargar tu boleta y participar."
@@ -935,6 +991,29 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
             )
         except Exception as e:
             st.error(f"No se pudo generar el link de pago: {e}")
+
+        # ── Botón manual de respaldo ─────────────────────────────────────
+        # Le da al jugador control inmediato: si ya pagó y no quiere
+        # esperar a un nuevo ingreso a la página (que dispararía el
+        # auto-chequeo de arriba), puede forzar la consulta a Mercado
+        # Pago ahora mismo, cuantas veces quiera.
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+        if st.button(
+            "🔄 Ya pagué, verificar ahora",
+            use_container_width=True,
+            key="btn_verificar_pago_manual",
+        ):
+            with st.spinner("Consultando el pago con Mercado Pago..."):
+                if verificar_pago_por_referencia(st.session_state.jugador_id):
+                    st.success("✅ ¡Pago confirmado! Ya podés participar.")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error(
+                        "Todavía no encontramos un pago aprobado a tu nombre. "
+                        "Si acabás de pagar, puede tardar unos segundos en "
+                        "acreditarse — esperá un momento y volvé a tocar el botón."
+                    )
         st.stop()
 
 
