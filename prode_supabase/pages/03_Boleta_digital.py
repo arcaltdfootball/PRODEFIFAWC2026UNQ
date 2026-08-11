@@ -49,6 +49,7 @@ import json
 import os
 import secrets
 import string
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -63,6 +64,38 @@ from escudos_map import url_escudo
 # MERCADO PAGO — SDK y helpers de cobro de inscripción
 # ══════════════════════════════════════════════════════════════════════════
 sdk = mercadopago.SDK(st.secrets["MP_ACCESS_TOKEN"])
+
+# Pool chico y liviano solo para poder ponerle un límite de tiempo duro a
+# las llamadas a la API de Mercado Pago (ver `_con_timeout` más abajo).
+_mp_executor = ThreadPoolExecutor(max_workers=4)
+
+
+def _con_timeout(func, *args, timeout=8, **kwargs):
+    """Ejecuta `func(*args, **kwargs)` con un límite de tiempo duro.
+
+    El SDK de Mercado Pago (y la librería `requests` que usa por debajo)
+    no tiene un timeout configurado por defecto: si la API de MP tarda
+    en responder, se demora, o la conexión se cuelga por lo que sea, la
+    llamada puede quedar esperando indefinidamente. Eso freezaba toda la
+    página (el jugador volvía de pagar y se quedaba con el spinner de
+    Streamlit girando para siempre, sin loguearlo ni mostrar ningún
+    error).
+
+    Acá corremos la llamada en un thread aparte y, si no contesta en
+    `timeout` segundos, la abandonamos y seguimos con la ejecución del
+    resto de la página en vez de quedarnos colgados esperándola. El
+    thread de la llamada lenta puede seguir corriendo en segundo plano
+    (Python no lo puede matar a la fuerza), pero ya no bloquea al
+    usuario ni a Streamlit.
+    """
+    future = _mp_executor.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout)
+    except _FutureTimeoutError:
+        raise TimeoutError(
+            f"La API de Mercado Pago no respondió en {timeout}s (se abandonó "
+            "la espera para no colgar la página)."
+        )
 
 
 def crear_preferencia_pago(jugador_id, nombre: str) -> str:
@@ -93,7 +126,7 @@ def crear_preferencia_pago(jugador_id, nombre: str) -> str:
         },
         "auto_return": "approved",
     }
-    result = sdk.preference().create(preference_data)
+    result = _con_timeout(sdk.preference().create, preference_data)
     pref = result["response"]
     sb.table("jugadores").update({"mp_preference_id": pref["id"]}).eq("id", jugador_id).execute()
     return pref["init_point"]
@@ -103,7 +136,7 @@ def verificar_pago(jugador_id, payment_id: str) -> bool:
     """Consulta el estado real del pago contra la API de Mercado Pago
     (nunca confiar solo en los parámetros que vienen en la URL de retorno)."""
     try:
-        resultado = sdk.payment().get(payment_id)
+        resultado = _con_timeout(sdk.payment().get, payment_id)
         pago = resultado["response"]
     except Exception:
         return False
@@ -137,11 +170,14 @@ def verificar_pago_por_referencia(jugador_id) -> bool:
     automáticamente (auto-cura al cargar la página) como a mano (botón
     "Ya pagué, verificar ahora")."""
     try:
-        resultado = sdk.payment().search({
-            "external_reference": str(jugador_id),
-            "sort": "date_created",
-            "criteria": "desc",
-        })
+        resultado = _con_timeout(
+            sdk.payment().search,
+            {
+                "external_reference": str(jugador_id),
+                "sort": "date_created",
+                "criteria": "desc",
+            },
+        )
         pagos = (resultado.get("response") or {}).get("results", [])
     except Exception:
         return False
