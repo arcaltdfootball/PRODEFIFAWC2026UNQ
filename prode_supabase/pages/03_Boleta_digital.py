@@ -1184,7 +1184,7 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
 
             st.markdown(
                 f"""
-                <a href="{link_pago}" rel="noopener noreferrer"
+                <a href="{link_pago}" target="_blank" rel="noopener noreferrer"
                    style="
                         display:flex; align-items:center; justify-content:center;
                         gap:10px; width:100%; box-sizing:border-box;
@@ -1199,6 +1199,10 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
                 """,
                 unsafe_allow_html=True,
             )
+            st.caption(
+                "Se va a abrir una pestaña nueva para pagar. Cuando termines, "
+                "esa misma pestaña te va a traer de vuelta acá, ya logueado."
+            )
         except Exception as e:
             st.error(f"No se pudo generar el link de pago: {e}")
 
@@ -1207,9 +1211,54 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
         # esperar a un nuevo ingreso a la página (que dispararía el
         # auto-chequeo de arriba), puede forzar la consulta a Mercado
         # Pago ahora mismo, cuantas veces quiera.
+        #
+        # Lo estilizamos IGUAL que el botón "Ir a pagar" de arriba (mismo
+        # tamaño, tipografía y el logo de Mercado Pago), pero en verde
+        # clarito en vez de celeste, para que se distingan de un vistazo
+        # aunque tengan la misma forma. El logo es el mismo PNG de MP,
+        # recoloreado con un filtro CSS (no hace falta un asset aparte).
         st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <style>
+            .st-key-btn_verificar_pago_manual button {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 10px !important;
+                width: 100% !important;
+                background-color: #3ecf7e !important;
+                border: none !important;
+                border-radius: 8px !important;
+                padding: 14px 18px !important;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.15) !important;
+            }
+            .st-key-btn_verificar_pago_manual button:hover {
+                background-color: #34b96e !important;
+            }
+            .st-key-btn_verificar_pago_manual button p {
+                color: #ffffff !important;
+                font-weight: 700 !important;
+                font-size: 17px !important;
+                margin: 0 !important;
+            }
+            .st-key-btn_verificar_pago_manual button::before {
+                content: "";
+                display: inline-block;
+                width: 90px;
+                height: 22px;
+                background-image: url('https://http2.mlstatic.com/frontend-assets/mp-web-navigation/ui-navigation/6.6.2/mercadopago/logo__large@2x.png');
+                background-size: contain;
+                background-repeat: no-repeat;
+                background-position: center;
+                filter: brightness(0) invert(1) sepia(1) saturate(6) hue-rotate(75deg) brightness(1.05);
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         if st.button(
-            "🔄 Ya pagué, verificar ahora",
+            "Ya pagué, verificar ahora",
             use_container_width=True,
             key="btn_verificar_pago_manual",
         ):
@@ -1578,6 +1627,23 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                 )
                 cargados = sum(1 for p in partidos_fecha if p["id"] in pron)
 
+                # Aciertos de esta fecha: igual que en el Ranking, contamos
+                # sobre los partidos YA JUGADOS (con resultado cargado) de
+                # esta fecha, no sobre el total — así el número tiene
+                # sentido apenas arranca la fecha y no queda en "0/9" todo
+                # el tiempo hasta que se jueguen todos.
+                _partidos_jugados_fecha = [
+                    p for p in partidos_fecha
+                    if p.get("goles_local") is not None and p.get("goles_visitante") is not None
+                ]
+                _aciertos_fecha = sum(
+                    1 for p in _partidos_jugados_fecha
+                    if (pron.get(p["id"], {}) or {}).get("puntos") not in (None, 0)
+                )
+                _label_fecha = f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"
+                if _partidos_jugados_fecha:
+                    _label_fecha += f"  ·  ✅ {_aciertos_fecha}/{len(_partidos_jugados_fecha)} aciertos"
+
                 # Clave de estado del expander: así, aunque el autoguardado
                 # dispare un rerun al tocar un pronóstico, el expander se
                 # mantiene EXACTAMENTE como lo dejó el usuario (abierto o
@@ -1586,7 +1652,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                 if _key_exp not in st.session_state:
                     st.session_state[_key_exp] = False
                 with st.expander(
-                    f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados",
+                    _label_fecha,
                     expanded=st.session_state[_key_exp],
                     key=_key_exp,
                 ):
