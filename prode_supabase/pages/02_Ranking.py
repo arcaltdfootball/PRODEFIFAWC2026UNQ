@@ -523,12 +523,36 @@ with st.expander("🔧 Diagnóstico de pronósticos (para depurar el ranking)", 
         if not _anomalias:
             st.success(
                 "No se encontraron anomalías: todos los pronósticos de "
-                "jugadores habilitados apuntan a un partido válido y el "
-                "puntaje recalculado coincide con el guardado."
+                "jugadores habilitados apuntan a un partido válido, no hay "
+                "duplicados, y el puntaje recalculado coincide con el "
+                "guardado."
             )
         else:
-            _sin_partido = [a for a in _anomalias if a["motivo"] == "partido_no_encontrado"]
+            _duplicados_a  = [a for a in _anomalias if a["motivo"] == "pronostico_duplicado"]
+            _faltantes_a   = [a for a in _anomalias if a["motivo"] == "partido_jugado_sin_pronostico"]
+            _sin_partido   = [a for a in _anomalias if a["motivo"] == "partido_no_encontrado"]
             _pts_distintos = [a for a in _anomalias if a["motivo"] == "puntos_guardados_no_coinciden"]
+
+            if _duplicados_a:
+                st.error(
+                    f"⚠️ {len(_duplicados_a)} pronóstico(s) duplicado(s) "
+                    "(mismo jugador + mismo partido con más de una fila). "
+                    "Esto es lo que hace que un jugador aparezca con MÁS "
+                    "partidos disputados que otros con el mismo fixture. "
+                    "El ranking ya los deduplica automáticamente, pero "
+                    "convendría borrar la(s) fila(s) de más en Supabase:"
+                )
+                for a in _duplicados_a:
+                    st.write(f"- {a['detalle']}")
+
+            if _faltantes_a:
+                st.warning(
+                    f"⚠️ {len(_faltantes_a)} jugador(es) tienen partidos ya "
+                    "jugados sin ningún pronóstico cargado (por eso les "
+                    "cuentan MENOS partidos disputados que a otros):"
+                )
+                for a in _faltantes_a:
+                    st.write(f"- {a['detalle']}")
 
             if _sin_partido:
                 st.error(
@@ -539,7 +563,7 @@ with st.expander("🔧 Diagnóstico de pronósticos (para depurar el ranking)", 
                     st.write(f"- {a['detalle']}")
 
             if _pts_distintos:
-                st.warning(
+                st.info(
                     f"ℹ️ {len(_pts_distintos)} pronóstico(s) tienen el `puntos` "
                     "guardado en la base desactualizado respecto del real "
                     "(el ranking ya usa el valor correcto igual):"
