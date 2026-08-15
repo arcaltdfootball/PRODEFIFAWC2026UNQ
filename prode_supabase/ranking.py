@@ -102,7 +102,20 @@ def _calcular_puntos(pr, partido):
 def _cargar_datos_base():
     """Trae jugadores habilitados, partidos y pronósticos, con los ids
     normalizados a string para poder cruzarlos sin que un tipo de dato
-    distinto entre tablas haga que algo se pierda en silencio."""
+    distinto entre tablas haga que algo se pierda en silencio.
+
+    Además DEDUPLICA: si por lo que sea quedaron dos filas en `pronosticos`
+    para el mismo (jugador, partido) — típicamente por una condición de
+    carrera al guardar (dos guardados casi simultáneos que no se vieron el
+    uno al otro en el caché en memoria y terminaron haciendo un INSERT cada
+    uno en vez de un UPDATE) — nos quedamos con UNA sola fila por partido.
+    Sin este paso, un jugador con una fila duplicada para un mismo partido
+    contaba ESE partido dos veces como "disputado" y sumaba sus puntos dos
+    veces, lo que infla su cantidad de partidos disputados por encima del
+    total real de partidos jugados — exactamente el patrón de "un jugador
+    tiene más partidos disputados que otro" cuando todos jugaron el mismo
+    fixture.
+    """
     sb = conectar()
 
     jugadores = sb.table("jugadores").select("id, nombre, pagado, activo").execute().data or []
@@ -119,18 +132,46 @@ def _cargar_datos_base():
     pronosticos = (
         sb.table("pronosticos")
         .select(
-            "jugador_id, partido_id, signo_pred, goles_local_pred, "
+            "id, jugador_id, partido_id, signo_pred, goles_local_pred, "
             "goles_visitante_pred, sin_marcador, puntos"
         )
         .execute()
         .data or []
     )
 
-    pronosticos_por_jugador = {}
+    # Paso 1: agrupar por jugador, y DENTRO de cada jugador por partido, para
+    # poder detectar y descartar duplicados de (jugador, partido).
+    crudo_por_jugador = {}
     for pr in pronosticos:
-        pronosticos_por_jugador.setdefault(_to_key(pr["jugador_id"]), []).append(pr)
+        jkey = _to_key(pr["jugador_id"])
+        crudo_por_jugador.setdefault(jkey, {}).setdefault(_to_key(pr["partido_id"]), []).append(pr)
 
-    return jugadores, partidos_por_id, pronosticos_por_jugador
+    duplicados = []  # para diagnóstico: qué (jugador, partido) tenían más de una fila
+    pronosticos_por_jugador = {}
+    for jkey, por_partido in crudo_por_jugador.items():
+        pronosticos_por_jugador[jkey] = []
+        for pkey, filas in por_partido.items():
+            if len(filas) > 1:
+                # Nos quedamos con la fila de mayor `id` (la más reciente,
+                # asumiendo id autoincremental), que es la que más chances
+                # tiene de reflejar el último pronóstico realmente cargado.
+                elegida = max(filas, key=lambda f: f.get("id") or 0)
+                duplicados.append({
+                    "jugador_id": pr_jugador_id_original(filas),
+                    "partido_id": elegida["partido_id"],
+                    "ids_duplicados": [f.get("id") for f in filas],
+                })
+            else:
+                elegida = filas[0]
+            pronosticos_por_jugador[jkey].append(elegida)
+
+    return jugadores, partidos_por_id, pronosticos_por_jugador, duplicados
+
+
+def pr_jugador_id_original(filas):
+    """Devuelve el jugador_id (sin normalizar) de un grupo de filas, para
+    mostrarlo tal cual en el diagnóstico."""
+    return filas[0].get("jugador_id") if filas else None
 
 
 def obtener_ranking():
@@ -160,7 +201,7 @@ def obtener_ranking():
     Solo incluye jugadores HABILITADOS: que pagaron la inscripción
     (columna `pagado`) y que el admin no los ocultó/pausó (columna `activo`).
     """
-    jugadores, partidos_por_id, pronosticos_por_jugador = _cargar_datos_base()
+    jugadores, partidos_por_id, pronosticos_por_jugador, _duplicados = _cargar_datos_base()
 
     ranking = []
     for j in jugadores:
@@ -218,15 +259,67 @@ def diagnosticar_ranking():
 
     Cada anomalía trae jugador_id, partido_id y el detalle, para poder
     ir directo a esa fila en Supabase si hace falta.
+
+    Además del cruce por pronóstico, agrega dos chequeos a nivel jugador:
+
+      - "pronostico_duplicado": el jugador tenía DOS (o más) filas en
+        `pronosticos` para el mismo partido. Esto infla su cantidad de
+        partidos disputados y sus puntos (se contaba el mismo partido más
+        de una vez) — es la causa más probable de que en el ranking un
+        jugador aparezca con MÁS partidos disputados que el total real de
+        partidos jugados, o más que otros jugadores del mismo fixture.
+
+      - "partido_jugado_sin_pronostico": el partido ya se jugó pero no se
+        encontró ningún pronóstico de ese jugador para él (ni siquiera con
+        un id "raro" — genuinamente no hay fila). Es la causa más probable
+        de que a un jugador le falten partidos disputados respecto a otros.
     """
-    jugadores, partidos_por_id, pronosticos_por_jugador = _cargar_datos_base()
+    jugadores, partidos_por_id, pronosticos_por_jugador, duplicados = _cargar_datos_base()
     nombres_por_id = {_to_key(j["id"]): j["nombre"] for j in jugadores}
 
     anomalias = []
+
+    for d in duplicados:
+        nombre = nombres_por_id.get(_to_key(d["jugador_id"]), f"jugador_id={d['jugador_id']!r}")
+        anomalias.append({
+            "jugador": nombre,
+            "partido_id": d["partido_id"],
+            "motivo": "pronostico_duplicado",
+            "detalle": (
+                f"{nombre} tiene {len(d['ids_duplicados'])} filas en "
+                f"`pronosticos` para el mismo partido_id={d['partido_id']!r} "
+                f"(ids: {d['ids_duplicados']}). El ranking ahora usa solo "
+                "una (la de id más alto), pero convendría borrar la(s) "
+                "fila(s) duplicada(s) de más directamente en Supabase."
+            ),
+        })
+
+    partidos_jugados_ids = {
+        pkey for pkey, p in partidos_por_id.items()
+        if p.get("goles_local") is not None and p.get("goles_visitante") is not None
+    }
+
     for jid_key, pronos in pronosticos_por_jugador.items():
         if jid_key not in nombres_por_id:
             continue  # jugador no habilitado (pagado/activo) o no encontrado
         nombre = nombres_por_id[jid_key]
+
+        partidos_con_pronostico = {_to_key(pr["partido_id"]) for pr in pronos}
+        faltantes = partidos_jugados_ids - partidos_con_pronostico
+        if faltantes:
+            anomalias.append({
+                "jugador": nombre,
+                "partido_id": sorted(faltantes),
+                "motivo": "partido_jugado_sin_pronostico",
+                "detalle": (
+                    f"{nombre} no tiene ningún pronóstico cargado para "
+                    f"{len(faltantes)} partido(s) ya jugado(s) "
+                    f"(partido_id: {sorted(faltantes)}). Si el jugador "
+                    "dice que sí los cargó, revisar esas filas en "
+                    "`pronosticos` — puede que el jugador_id o partido_id "
+                    "hayan quedado mal guardados."
+                ),
+            })
 
         for pr in pronos:
             partido = partidos_por_id.get(_to_key(pr["partido_id"]))
