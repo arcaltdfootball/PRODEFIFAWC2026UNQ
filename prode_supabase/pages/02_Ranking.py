@@ -3,7 +3,7 @@ import pandas as pd
 import base64
 import math
 from pathlib import Path
-from ranking import obtener_ranking, _calcular_puntos
+from ranking import obtener_ranking, _calcular_puntos, diagnosticar_ranking
 from database import conectar
 
 try:
@@ -502,6 +502,50 @@ with _tabs[0]:
                 pass
 
     render_ranking(df_general, busqueda, "pos_ant_general")
+
+# ── Diagnóstico ──────────────────────────────────────────────────────────────
+# Panel para detectar EN LA BASE REAL cuál de los dos problemas está pasando:
+#   (a) pronósticos que apuntan a un partido_id que no se encuentra
+#       ("no le computa partidos jugados"), o
+#   (b) pronósticos donde el puntaje guardado no coincide con el
+#       recalculado en vivo ("no le sumó los 3 puntos" con datos viejos).
+# El ranking de arriba YA usa el valor recalculado en vivo, así que esto es
+# solo para ver la causa concreta y, si hace falta, corregir la fila en
+# Supabase a mano.
+with st.expander("🔧 Diagnóstico de pronósticos (para depurar el ranking)", expanded=False):
+    try:
+        _anomalias = diagnosticar_ranking()
+    except Exception as e:
+        _anomalias = None
+        st.error(f"No se pudo correr el diagnóstico: {e}")
+
+    if _anomalias is not None:
+        if not _anomalias:
+            st.success(
+                "No se encontraron anomalías: todos los pronósticos de "
+                "jugadores habilitados apuntan a un partido válido y el "
+                "puntaje recalculado coincide con el guardado."
+            )
+        else:
+            _sin_partido = [a for a in _anomalias if a["motivo"] == "partido_no_encontrado"]
+            _pts_distintos = [a for a in _anomalias if a["motivo"] == "puntos_guardados_no_coinciden"]
+
+            if _sin_partido:
+                st.error(
+                    f"⚠️ {len(_sin_partido)} pronóstico(s) apuntan a un partido "
+                    "que no se encuentra (por eso no se computan):"
+                )
+                for a in _sin_partido:
+                    st.write(f"- {a['detalle']}")
+
+            if _pts_distintos:
+                st.warning(
+                    f"ℹ️ {len(_pts_distintos)} pronóstico(s) tienen el `puntos` "
+                    "guardado en la base desactualizado respecto del real "
+                    "(el ranking ya usa el valor correcto igual):"
+                )
+                for a in _pts_distintos:
+                    st.write(f"- {a['detalle']}")
 
 for _tab, _mes in zip(_tabs[1:], _meses_disponibles):
     with _tab:
