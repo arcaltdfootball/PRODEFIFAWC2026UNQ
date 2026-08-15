@@ -3,7 +3,7 @@ import pandas as pd
 import base64
 import math
 from pathlib import Path
-from ranking import obtener_ranking, _calcular_puntos, diagnosticar_ranking
+from ranking import obtener_ranking, _fetch_all
 from database import conectar
 
 try:
@@ -217,7 +217,9 @@ except Exception as e:
 # `obtener_ranking()` ya devuelve solo jugadores habilitados (pagaron y no
 # están pausados por el admin) — el filtro vive en ranking.py.
 try:
-    _jugadores_raw = sb.table("jugadores").select("id, nombre, pagado, activo").execute().data or []
+    _jugadores_raw = _fetch_all(
+        lambda: sb.table("jugadores").select("id, nombre, pagado, activo")
+    )
 except Exception as e:
     st.error(f"No se pudo leer la lista de jugadores: {e}")
     _jugadores_raw = []
@@ -245,13 +247,7 @@ def obtener_ranking_mensual(mes, ids_habilitados):
     """Misma lógica de puntaje que ranking.obtener_ranking() (1 pto por
     signo, 3 en total si es exacto; "disputado" = el partido ya tiene
     goles_local/goles_visitante cargados), pero acotada a los partidos de
-    las Fechas asignadas a `mes`.
-
-    Los puntos se recalculan con `_calcular_puntos` a partir del pronóstico
-    crudo contra el resultado real (en vez de leer la columna `puntos` de
-    la base), para que el ranking mensual sea correcto aunque el recálculo
-    que hace el admin al cargar un resultado haya fallado en silencio para
-    algún pronóstico puntual. Ver `ranking.py` para el detalle."""
+    las Fechas asignadas a `mes`."""
     fechas = [
         r["fecha_numero"]
         for r in sb.table("fecha_mes_map").select("fecha_numero").eq("mes", mes).execute().data or []
@@ -259,28 +255,19 @@ def obtener_ranking_mensual(mes, ids_habilitados):
     if not fechas:
         return []
 
-    partidos_mes = (
-        sb.table("partidos")
+    partidos_mes = _fetch_all(
+        lambda: sb.table("partidos")
         .select("id, goles_local, goles_visitante")
         .in_("fecha_numero", fechas)
-        .execute()
-        .data
-        or []
     )
     partidos_por_id = {p["id"]: p for p in partidos_mes}
     if not partidos_por_id:
         return []
 
-    pronos = (
-        sb.table("pronosticos")
-        .select(
-            "jugador_id, partido_id, signo_pred, goles_local_pred, "
-            "goles_visitante_pred, sin_marcador, puntos"
-        )
+    pronos = _fetch_all(
+        lambda: sb.table("pronosticos")
+        .select("jugador_id, partido_id, puntos")
         .in_("partido_id", list(partidos_por_id.keys()))
-        .execute()
-        .data
-        or []
     )
 
     agregados = {}
@@ -291,13 +278,14 @@ def obtener_ranking_mensual(mes, ids_habilitados):
         partido = partidos_por_id.get(pr["partido_id"])
         if not partido:
             continue
-
-        pts = _calcular_puntos(pr, partido)
-        if pts is None:
+        gl_real = partido.get("goles_local")
+        gv_real = partido.get("goles_visitante")
+        if gl_real is None or gv_real is None:
             continue  # partido todavía no jugado: no cuenta como disputado
 
         a = agregados.setdefault(jid, {"puntos": 0, "aciertos": 0, "disputados": 0, "aciertos_exactos": 0})
         a["disputados"] += 1
+        pts = pr.get("puntos") or 0
         a["puntos"] += pts
         if pts >= 3:
             a["aciertos"] += 1
@@ -502,74 +490,6 @@ with _tabs[0]:
                 pass
 
     render_ranking(df_general, busqueda, "pos_ant_general")
-
-# ── Diagnóstico ──────────────────────────────────────────────────────────────
-# Panel para detectar EN LA BASE REAL cuál de los dos problemas está pasando:
-#   (a) pronósticos que apuntan a un partido_id que no se encuentra
-#       ("no le computa partidos jugados"), o
-#   (b) pronósticos donde el puntaje guardado no coincide con el
-#       recalculado en vivo ("no le sumó los 3 puntos" con datos viejos).
-# El ranking de arriba YA usa el valor recalculado en vivo, así que esto es
-# solo para ver la causa concreta y, si hace falta, corregir la fila en
-# Supabase a mano.
-with st.expander("🔧 Diagnóstico de pronósticos (para depurar el ranking)", expanded=False):
-    try:
-        _anomalias = diagnosticar_ranking()
-    except Exception as e:
-        _anomalias = None
-        st.error(f"No se pudo correr el diagnóstico: {e}")
-
-    if _anomalias is not None:
-        if not _anomalias:
-            st.success(
-                "No se encontraron anomalías: todos los pronósticos de "
-                "jugadores habilitados apuntan a un partido válido, no hay "
-                "duplicados, y el puntaje recalculado coincide con el "
-                "guardado."
-            )
-        else:
-            _duplicados_a  = [a for a in _anomalias if a["motivo"] == "pronostico_duplicado"]
-            _faltantes_a   = [a for a in _anomalias if a["motivo"] == "partido_jugado_sin_pronostico"]
-            _sin_partido   = [a for a in _anomalias if a["motivo"] == "partido_no_encontrado"]
-            _pts_distintos = [a for a in _anomalias if a["motivo"] == "puntos_guardados_no_coinciden"]
-
-            if _duplicados_a:
-                st.error(
-                    f"⚠️ {len(_duplicados_a)} pronóstico(s) duplicado(s) "
-                    "(mismo jugador + mismo partido con más de una fila). "
-                    "Esto es lo que hace que un jugador aparezca con MÁS "
-                    "partidos disputados que otros con el mismo fixture. "
-                    "El ranking ya los deduplica automáticamente, pero "
-                    "convendría borrar la(s) fila(s) de más en Supabase:"
-                )
-                for a in _duplicados_a:
-                    st.write(f"- {a['detalle']}")
-
-            if _faltantes_a:
-                st.warning(
-                    f"⚠️ {len(_faltantes_a)} jugador(es) tienen partidos ya "
-                    "jugados sin ningún pronóstico cargado (por eso les "
-                    "cuentan MENOS partidos disputados que a otros):"
-                )
-                for a in _faltantes_a:
-                    st.write(f"- {a['detalle']}")
-
-            if _sin_partido:
-                st.error(
-                    f"⚠️ {len(_sin_partido)} pronóstico(s) apuntan a un partido "
-                    "que no se encuentra (por eso no se computan):"
-                )
-                for a in _sin_partido:
-                    st.write(f"- {a['detalle']}")
-
-            if _pts_distintos:
-                st.info(
-                    f"ℹ️ {len(_pts_distintos)} pronóstico(s) tienen el `puntos` "
-                    "guardado en la base desactualizado respecto del real "
-                    "(el ranking ya usa el valor correcto igual):"
-                )
-                for a in _pts_distintos:
-                    st.write(f"- {a['detalle']}")
 
 for _tab, _mes in zip(_tabs[1:], _meses_disponibles):
     with _tab:
