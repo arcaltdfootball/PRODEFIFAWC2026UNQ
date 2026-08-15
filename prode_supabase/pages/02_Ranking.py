@@ -3,7 +3,7 @@ import pandas as pd
 import base64
 import math
 from pathlib import Path
-from ranking import obtener_ranking
+from ranking import obtener_ranking, _calcular_puntos
 from database import conectar
 
 try:
@@ -245,7 +245,13 @@ def obtener_ranking_mensual(mes, ids_habilitados):
     """Misma lógica de puntaje que ranking.obtener_ranking() (1 pto por
     signo, 3 en total si es exacto; "disputado" = el partido ya tiene
     goles_local/goles_visitante cargados), pero acotada a los partidos de
-    las Fechas asignadas a `mes`."""
+    las Fechas asignadas a `mes`.
+
+    Los puntos se recalculan con `_calcular_puntos` a partir del pronóstico
+    crudo contra el resultado real (en vez de leer la columna `puntos` de
+    la base), para que el ranking mensual sea correcto aunque el recálculo
+    que hace el admin al cargar un resultado haya fallado en silencio para
+    algún pronóstico puntual. Ver `ranking.py` para el detalle."""
     fechas = [
         r["fecha_numero"]
         for r in sb.table("fecha_mes_map").select("fecha_numero").eq("mes", mes).execute().data or []
@@ -267,7 +273,10 @@ def obtener_ranking_mensual(mes, ids_habilitados):
 
     pronos = (
         sb.table("pronosticos")
-        .select("jugador_id, partido_id, puntos")
+        .select(
+            "jugador_id, partido_id, signo_pred, goles_local_pred, "
+            "goles_visitante_pred, sin_marcador, puntos"
+        )
         .in_("partido_id", list(partidos_por_id.keys()))
         .execute()
         .data
@@ -282,14 +291,13 @@ def obtener_ranking_mensual(mes, ids_habilitados):
         partido = partidos_por_id.get(pr["partido_id"])
         if not partido:
             continue
-        gl_real = partido.get("goles_local")
-        gv_real = partido.get("goles_visitante")
-        if gl_real is None or gv_real is None:
+
+        pts = _calcular_puntos(pr, partido)
+        if pts is None:
             continue  # partido todavía no jugado: no cuenta como disputado
 
         a = agregados.setdefault(jid, {"puntos": 0, "aciertos": 0, "disputados": 0, "aciertos_exactos": 0})
         a["disputados"] += 1
-        pts = pr.get("puntos") or 0
         a["puntos"] += pts
         if pts >= 3:
             a["aciertos"] += 1
