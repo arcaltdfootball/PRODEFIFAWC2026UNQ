@@ -1,8 +1,41 @@
 from database import conectar
 
 
+def _to_int(v):
+    """
+    Convierte a int de forma tolerante. Soluciona el caso en que un gol
+    haya quedado guardado como texto ("3") en vez de número (3): en Python
+    `3 == "3"` da False, así que sin este cast un marcador exacto podía
+    NUNCA calzar con el resultado real y jamás dar los 3 puntos, aunque el
+    jugador hubiera acertado perfecto.
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):  # bool es subclase de int en Python; evitar confusiones
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_key(v):
+    """
+    Normaliza un id (de jugador o de partido) a string para usarlo como
+    clave de diccionario. Soluciona el caso en que el mismo id venga con
+    tipos distintos entre tablas (ej. `partidos.id` como número y
+    `pronosticos.partido_id` como texto, o un UUID con mayúsculas/espacios
+    distintos): sin normalizar, el lookup fallaba en silencio y ese
+    pronóstico se salteaba directo, como si no existiera.
+    """
+    if v is None:
+        return None
+    return str(v).strip()
+
+
 def _signo(gl, gv):
     """Deriva el signo (1 / X / 2) a partir de un marcador. None si falta algún gol."""
+    gl, gv = _to_int(gl), _to_int(gv)
     if gl is None or gv is None:
         return None
     if gl > gv:
@@ -12,53 +45,49 @@ def _signo(gl, gv):
     return "2"
 
 
+def _normalizar_signo(s):
+    """Normaliza el signo guardado ('1'/'X'/'2') tolerando espacios o
+    mayúsculas/minúsculas distintas, para que la comparación no falle por
+    un detalle de formato."""
+    if s is None:
+        return None
+    s = str(s).strip().upper()
+    return s if s in ("1", "X", "2") else None
+
+
 def _calcular_puntos(pr, partido):
     """
-    Recalcula el puntaje de UN pronóstico contra el resultado real del partido,
-    en vez de confiar en la columna `puntos` guardada en la tabla `pronosticos`.
-
-    Por qué: `puntos` se escribe en dos momentos (cuando el jugador carga su
-    pronóstico, y cuando el admin carga el resultado real y se recorren todos
-    los pronósticos de ese partido para recalcularlos). Ese segundo recálculo
-    hace un UPDATE por cada fila sin verificar que se haya grabado de verdad
-    (a diferencia del resto de las escrituras de la app, que sí chequean con
-    un SELECT fresco por los gotchas conocidos de Supabase/RLS). Si ese UPDATE
-    falla en silencio para una fila puntual, esa fila queda con `puntos` viejo
-    o NULL para siempre, aunque el jugador sí haya acertado.
-
-    Recalculando acá, en el momento de armar el ranking, el resultado ya no
-    depende de que esa escritura haya funcionado: siempre se compara el
-    pronóstico real contra el resultado real.
+    Recalcula el puntaje de UN pronóstico contra el resultado real del
+    partido, en vez de confiar en la columna `puntos` guardada en
+    `pronosticos` (que puede quedar desactualizada si el UPDATE que hace
+    el admin al cargar un resultado falla en silencio para alguna fila).
 
     Devuelve:
       - None  si el partido todavía no se jugó (no cuenta como disputado)
       - 0, 1 o 3 puntos según corresponda
     """
-    gl_real = partido.get("goles_local")
-    gv_real = partido.get("goles_visitante")
+    gl_real = _to_int(partido.get("goles_local"))
+    gv_real = _to_int(partido.get("goles_visitante"))
     if gl_real is None or gv_real is None:
         return None  # partido todavía no jugado
 
     signo_real = _signo(gl_real, gv_real)
 
-    gl_pred = pr.get("goles_local_pred")
-    gv_pred = pr.get("goles_visitante_pred")
+    gl_pred = _to_int(pr.get("goles_local_pred"))
+    gv_pred = _to_int(pr.get("goles_visitante_pred"))
     sin_marcador = bool(pr.get("sin_marcador"))
 
-    # Preferimos el signo_pred guardado; si por algún motivo no está, lo
-    # derivamos del marcador cargado (compatibilidad con datos viejos).
-    signo_pred = pr.get("signo_pred") or _signo(gl_pred, gv_pred)
+    # Preferimos el signo_pred guardado; si por algún motivo no está (o no
+    # es un valor válido), lo derivamos del marcador cargado.
+    signo_pred = _normalizar_signo(pr.get("signo_pred")) or _signo(gl_pred, gv_pred)
 
     if signo_pred is None:
-        # No hay ni signo guardado ni marcador para derivarlo: no hay
-        # pronóstico real sobre el que calcular puntos.
-        return 0
+        return 0  # no hay pronóstico real sobre el que calcular puntos
 
     if sin_marcador:
-        # El jugador solo eligió Local/Empate/Visitante, sin cargar un
-        # marcador exacto a mano. Tope de 1 punto, aunque el marcador
-        # placeholder guardado internamente coincida por casualidad con
-        # el resultado real: NUNCA debe dar los 3 puntos en ese caso.
+        # Solo eligió Local/Empate/Visitante, sin marcador exacto a mano.
+        # Tope de 1 punto, aunque el placeholder interno coincida con el
+        # resultado real por casualidad: NUNCA debe dar 3 puntos acá.
         return 1 if signo_pred == signo_real else 0
 
     if gl_pred is not None and gv_pred is not None and gl_pred == gl_real and gv_pred == gv_real:
@@ -70,32 +99,10 @@ def _calcular_puntos(pr, partido):
     return 0
 
 
-def obtener_ranking():
-    """
-    Devuelve lista de dicts con el ranking de la Liga Profesional Argentina,
-    ordenada de mayor a menor puntos.
-
-    Sistema de puntaje:
-      - 1 punto si el pronóstico acierta el signo (Local / Empate / Visitante)
-      - 3 puntos en total si el pronóstico acierta el marcador exacto
-
-    Los puntos se recalculan acá mismo a partir del pronóstico crudo contra
-    el resultado real del partido (ver `_calcular_puntos`), en vez de leer
-    directamente la columna `puntos` de la base, para que el ranking sea
-    correcto aunque el recálculo que hace el admin al cargar un resultado
-    haya fallado en silencio para algún pronóstico puntual.
-
-    Cada dict tiene:
-      - nombre
-      - puntos            (suma total de puntos)
-      - aciertos          (partidos donde sumó al menos 1 punto, sea por
-                            signo o por resultado exacto)
-      - disputados        (partidos ya jugados sobre los que había pronóstico)
-      - aciertos_exactos  (partidos donde acertó el marcador exacto, 3 pts)
-
-    Solo incluye jugadores HABILITADOS: que pagaron la inscripción
-    (columna `pagado`) y que el admin no los ocultó/pausó (columna `activo`).
-    """
+def _cargar_datos_base():
+    """Trae jugadores habilitados, partidos y pronósticos, con los ids
+    normalizados a string para poder cruzarlos sin que un tipo de dato
+    distinto entre tablas haga que algo se pierda en silencio."""
     sb = conectar()
 
     jugadores = sb.table("jugadores").select("id, nombre, pagado, activo").execute().data or []
@@ -107,7 +114,7 @@ def obtener_ranking():
         .execute()
         .data or []
     )
-    partidos_por_id = {p["id"]: p for p in partidos}
+    partidos_por_id = {_to_key(p["id"]): p for p in partidos}
 
     pronosticos = (
         sb.table("pronosticos")
@@ -121,7 +128,39 @@ def obtener_ranking():
 
     pronosticos_por_jugador = {}
     for pr in pronosticos:
-        pronosticos_por_jugador.setdefault(pr["jugador_id"], []).append(pr)
+        pronosticos_por_jugador.setdefault(_to_key(pr["jugador_id"]), []).append(pr)
+
+    return jugadores, partidos_por_id, pronosticos_por_jugador
+
+
+def obtener_ranking():
+    """
+    Devuelve lista de dicts con el ranking de la Liga Profesional Argentina,
+    ordenada de mayor a menor puntos.
+
+    Sistema de puntaje:
+      - 1 punto si el pronóstico acierta el signo (Local / Empate / Visitante)
+      - 3 puntos en total si el pronóstico acierta el marcador exacto
+
+    Los puntos se recalculan acá mismo a partir del pronóstico crudo contra
+    el resultado real del partido (ver `_calcular_puntos`), con los ids
+    normalizados (ver `_to_key`) y los goles convertidos a número de forma
+    tolerante (ver `_to_int`), para que el ranking sea correcto aunque haya
+    inconsistencias de tipo entre columnas o algún UPDATE previo haya
+    fallado en silencio.
+
+    Cada dict tiene:
+      - nombre
+      - puntos            (suma total de puntos)
+      - aciertos          (partidos donde sumó al menos 1 punto, sea por
+                            signo o por resultado exacto)
+      - disputados        (partidos ya jugados sobre los que había pronóstico)
+      - aciertos_exactos  (partidos donde acertó el marcador exacto, 3 pts)
+
+    Solo incluye jugadores HABILITADOS: que pagaron la inscripción
+    (columna `pagado`) y que el admin no los ocultó/pausó (columna `activo`).
+    """
+    jugadores, partidos_por_id, pronosticos_por_jugador = _cargar_datos_base()
 
     ranking = []
     for j in jugadores:
@@ -130,8 +169,8 @@ def obtener_ranking():
         disputados       = 0
         aciertos_exactos = 0
 
-        for pr in pronosticos_por_jugador.get(j["id"], []):
-            partido = partidos_por_id.get(pr["partido_id"])
+        for pr in pronosticos_por_jugador.get(_to_key(j["id"]), []):
+            partido = partidos_por_id.get(_to_key(pr["partido_id"]))
             if not partido:
                 continue
 
@@ -158,3 +197,72 @@ def obtener_ranking():
 
     ranking.sort(key=lambda x: x["puntos"], reverse=True)
     return ranking
+
+
+def diagnosticar_ranking():
+    """
+    Recorre TODOS los pronósticos de jugadores habilitados y devuelve una
+    lista de anomalías concretas, para poder ver en pantalla (sin tocar la
+    base de datos a mano) qué está pasando en casos puntuales:
+
+      - "partido_no_encontrado": el pronóstico apunta a un partido_id que
+        no aparece en la tabla `partidos` (aunque se normalicen los ids a
+        string). Esto hace que ese pronóstico NUNCA se compute, ni bien ni
+        mal — el síntoma de "no le computa partidos jugados".
+
+      - "puntos_guardados_no_coinciden": el partido ya está jugado y el
+        puntaje recalculado en vivo NO coincide con lo que quedó guardado
+        en la columna `puntos` de la base. Esto es la huella de un UPDATE
+        que falló en silencio al cargar el resultado (o de un pronóstico
+        cargado/editado después de guardado el resultado).
+
+    Cada anomalía trae jugador_id, partido_id y el detalle, para poder
+    ir directo a esa fila en Supabase si hace falta.
+    """
+    jugadores, partidos_por_id, pronosticos_por_jugador = _cargar_datos_base()
+    nombres_por_id = {_to_key(j["id"]): j["nombre"] for j in jugadores}
+
+    anomalias = []
+    for jid_key, pronos in pronosticos_por_jugador.items():
+        if jid_key not in nombres_por_id:
+            continue  # jugador no habilitado (pagado/activo) o no encontrado
+        nombre = nombres_por_id[jid_key]
+
+        for pr in pronos:
+            partido = partidos_por_id.get(_to_key(pr["partido_id"]))
+            if not partido:
+                anomalias.append({
+                    "jugador": nombre,
+                    "partido_id": pr["partido_id"],
+                    "motivo": "partido_no_encontrado",
+                    "detalle": (
+                        f"El pronóstico de {nombre} apunta a partido_id="
+                        f"{pr['partido_id']!r}, que no existe (o no calza "
+                        "de tipo) en la tabla `partidos`. Este pronóstico "
+                        "nunca se computa en el ranking."
+                    ),
+                })
+                continue
+
+            pts_calculado = _calcular_puntos(pr, partido)
+            if pts_calculado is None:
+                continue  # partido no jugado, nada que comparar
+
+            pts_guardado = pr.get("puntos")
+            if pts_guardado != pts_calculado:
+                anomalias.append({
+                    "jugador": nombre,
+                    "partido_id": pr["partido_id"],
+                    "motivo": "puntos_guardados_no_coinciden",
+                    "detalle": (
+                        f"{nombre} — partido_id={pr['partido_id']!r}: el "
+                        f"puntaje guardado en la base es {pts_guardado!r} "
+                        f"pero el recalculado a partir del pronóstico real "
+                        f"es {pts_calculado}. El ranking ya usa el valor "
+                        "recalculado, así que esto no afecta el ranking, "
+                        "pero indica una fila con `puntos` desactualizado "
+                        "en la tabla `pronosticos`."
+                    ),
+                })
+
+    return anomalias
