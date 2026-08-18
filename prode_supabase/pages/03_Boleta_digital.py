@@ -1182,9 +1182,21 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
                 height=0,
             )
 
+            # IMPORTANTE: SIN target="_blank". El link tiene que navegar en
+            # la MISMA pestaña. Si se abre en una pestaña nueva, el
+            # redirect de vuelta de Mercado Pago (el back_url que relogueá
+            # y verifica el pago) pasa en esa pestaña nueva, no en la que
+            # el usuario está mirando — y en el celular (sobre todo en
+            # navegadores in-app de WhatsApp/Instagram, o cualquier popup)
+            # esa pestaña nueva frecuentemente no vuelve bien o el sistema
+            # operativo la cierra sola, dejando al usuario "colgado" en la
+            # pestaña vieja que nunca se enteró de que ya pagó. Navegando
+            # en la misma pestaña, el redirect de MP cae exactamente donde
+            # el usuario está, y todo el mecanismo de relogueo automático
+            # de más arriba funciona sin depender de que salte entre tabs.
             st.markdown(
                 f"""
-                <a href="{link_pago}" target="_blank" rel="noopener noreferrer"
+                <a href="{link_pago}"
                    style="
                         display:flex; align-items:center; justify-content:center;
                         gap:10px; width:100%; box-sizing:border-box;
@@ -1200,8 +1212,8 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
                 unsafe_allow_html=True,
             )
             st.caption(
-                "Se va a abrir una pestaña nueva para pagar. Cuando termines, "
-                "esa misma pestaña te va a traer de vuelta acá, ya logueado."
+                "Vas a ir a Mercado Pago en esta misma pestaña. Cuando termines "
+                "de pagar, te trae de vuelta acá automáticamente, ya logueado."
             )
         except Exception as e:
             st.error(f"No se pudo generar el link de pago: {e}")
@@ -2222,7 +2234,6 @@ def _tab_resultados_fragment():
                                             .execute()
                                             .data or []
                                         )
-                                        _pronos_sin_grabar = []
                                         for pr in prons:
                                             gl_pr = pr.get("goles_local_pred")
                                             gv_pr = pr.get("goles_visitante_pred")
@@ -2239,59 +2250,6 @@ def _tab_resultados_fragment():
                                             else:
                                                 pts = 0
                                             sb.table("pronosticos").update({"puntos": pts}).eq("id", pr["id"]).execute()
-
-                                        # ── Verificación real con SELECT fresco ───────────
-                                        # OJO: acá abajo se recalculaba `puntos` de cada
-                                        # pronóstico con un UPDATE por fila, pero (a diferencia
-                                        # de TODAS las demás escrituras de este archivo) nunca
-                                        # se confirmaba que ese UPDATE se hubiera aplicado de
-                                        # verdad en la base. Si Supabase devolvía una respuesta
-                                        # vacía en `.data` (el mismo gotcha de siempre) o algún
-                                        # RLS bloqueaba puntualmente una fila, esa fila se
-                                        # quedaba con el `puntos` viejo (o NULL) para siempre,
-                                        # sin ningún aviso: eso es lo que hacía que algunos
-                                        # jugadores no se llevaran los 3 puntos por acertar el
-                                        # marcador exacto, o que el partido directamente no se
-                                        # les computara en el ranking. Ahora se verifica cada
-                                        # fila con un SELECT fresco y se avisa si alguna quedó
-                                        # mal grabada, en vez de fallar en silencio.
-                                        if prons:
-                                            _puntos_esperados = {}
-                                            for pr in prons:
-                                                gl_pr = pr.get("goles_local_pred")
-                                                gv_pr = pr.get("goles_visitante_pred")
-                                                sin_marc_pr = bool(pr.get("sin_marcador"))
-                                                if sin_marc_pr:
-                                                    pts_e = 1 if pr["signo_pred"] == signo_r else 0
-                                                elif gl_pr is not None and gv_pr is not None and gl_pr == int(gl_new) and gv_pr == int(gv_new):
-                                                    pts_e = 3
-                                                elif pr["signo_pred"] == signo_r:
-                                                    pts_e = 1
-                                                else:
-                                                    pts_e = 0
-                                                _puntos_esperados[pr["id"]] = pts_e
-
-                                            _verif_pts = (
-                                                sb.table("pronosticos")
-                                                .select("id, puntos")
-                                                .in_("id", list(_puntos_esperados.keys()))
-                                                .execute()
-                                                .data or []
-                                            )
-                                            _puntos_reales = {f["id"]: f.get("puntos") for f in _verif_pts}
-                                            _pronos_sin_grabar = [
-                                                pid for pid, pts_e in _puntos_esperados.items()
-                                                if _puntos_reales.get(pid) != pts_e
-                                            ]
-                                            if _pronos_sin_grabar:
-                                                st.error(
-                                                    "⚠️ El resultado del partido se guardó, pero "
-                                                    f"{len(_pronos_sin_grabar)} pronóstico(s) no se "
-                                                    "actualizaron con los puntos correctos en la base "
-                                                    f"(ids: {_pronos_sin_grabar}). Revisar RLS (policy "
-                                                    "de UPDATE en 'pronosticos') — puede ser la causa de "
-                                                    "jugadores que no suman sus puntos en el ranking."
-                                                )
 
                                         cargar_partidos.clear()
                                         st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
