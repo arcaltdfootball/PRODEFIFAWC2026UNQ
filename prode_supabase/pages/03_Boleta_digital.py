@@ -49,6 +49,7 @@ import json
 import os
 import secrets
 import string
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -111,6 +112,40 @@ def crear_preferencia_pago(jugador_id, nombre: str) -> str:
     # código nunca se ejecuta, y por eso queda deslogueado y sin la boleta
     # marcada como paga.
     pagina_boleta = f"{base_url}/Boleta_digital"
+
+    # ── PUENTE ESTÁTICO (bridge_pago.html) ───────────────────────────────
+    # NO mandamos a Mercado Pago a volver directo a "/Boleta_digital".
+    # Volver directo ahí significa que, apenas MP redirige, el navegador
+    # tiene que: (1) descargar el bundle de Streamlit, (2) abrir un
+    # WebSocket nuevo contra el server, y (3) recién ahí arranca a correr
+    # este script Python. Si el server estaba "frío" (sin visitas hacía
+    # rato, hosting con auto-sleep) o el handshake del WebSocket se cuelga
+    # un segundo (pasa seguido en navegadores in-app / Custom Tabs de
+    # Android al volver de otra app), el usuario se queda mirando el logo
+    # de carga de Streamlit ANTES de que corra una sola línea de nuestro
+    # código — por eso ningún try/except ni timeout de acá adentro podía
+    # arreglarlo: el problema pasa un escalón más abajo, en la carga misma
+    # de la página, no en nuestra lógica.
+    #
+    # Por eso hacemos que MP vuelva primero a un archivo HTML puro y
+    # liviano (servido como estático por Streamlit, sin depender de que el
+    # server Python esté despierto ni de que el WebSocket conecte), que:
+    #   1. Pinta contenido al toque (nada de spinner ambiguo).
+    #   2. Dispara en segundo plano un ping a la app para "despertarla" si
+    #      estaba dormida, ANTES de navegar a la página real.
+    #   3. Recién ahí redirige a "/Boleta_digital" con los mismos
+    #      parámetros que mandó Mercado Pago, para que el bloque de
+    #      Python de más abajo (verificación de pago + re-login) corra
+    #      exactamente igual que antes.
+    #   4. Si algo falla (JS desactivado, lo que sea), siempre queda
+    #      visible un link común y corriente para entrar a mano.
+    pagina_bridge = f"{base_url}/app/static/bridge_pago.html"
+    # Le pasamos el destino final ya armado y URL-encodeado, en vez de
+    # hacer que el HTML estático "adivine" la ruta a partir de su propio
+    # origin. Así el puente funciona igual sin importar dominios
+    # custom, proxies, o si algún día cambia la estructura de rutas.
+    destino_qs = urllib.parse.quote(pagina_boleta, safe="")
+
     preference_data = {
         "items": [{
             "title": f"Inscripción Prode - {nombre}",
@@ -120,9 +155,9 @@ def crear_preferencia_pago(jugador_id, nombre: str) -> str:
         }],
         "external_reference": str(jugador_id),
         "back_urls": {
-            "success": f"{pagina_boleta}/?pago=ok&jid={jugador_id}",
-            "pending": f"{pagina_boleta}/?pago=pendiente&jid={jugador_id}",
-            "failure": f"{pagina_boleta}/?pago=fallo&jid={jugador_id}",
+            "success": f"{pagina_bridge}?destino={destino_qs}&pago=ok&jid={jugador_id}",
+            "pending": f"{pagina_bridge}?destino={destino_qs}&pago=pendiente&jid={jugador_id}",
+            "failure": f"{pagina_bridge}?destino={destino_qs}&pago=fallo&jid={jugador_id}",
         },
         "auto_return": "approved",
     }
