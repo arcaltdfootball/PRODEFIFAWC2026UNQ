@@ -75,6 +75,12 @@
   var subtitulo = document.getElementById("subtitulo");
   var manualBox = document.getElementById("manualBox");
   var manualLink = document.getElementById("manualLink");
+  // Por si esta página termina cargada dentro de un iframe (Streamlit
+  // Community Cloud envuelve la app en uno propio mientras muestra su
+  // pantalla de carga con su marca), el link manual también tiene que
+  // apuntar a romper ese iframe y navegar la pestaña entera, no quedarse
+  // adentro.
+  manualLink.target = "_top";
 
   if (!destino) {
     // No debería pasar nunca en el flujo normal (siempre lo mandamos
@@ -131,7 +137,25 @@
   function irAlDestino() {
     if (navegando) return;
     navegando = true;
-    window.location.replace(target);
+    // CLAVE: navegamos "window.top" (la pestaña entera del navegador),
+    // no "window" (que sería solo este documento). Streamlit Community
+    // Cloud envuelve la app en un iframe propio mientras muestra su
+    // pantalla de carga con su marca — si esta página quedó cargada
+    // adentro de ese iframe, un window.location.replace() normal solo
+    // navegaría DENTRO del iframe, invisible para el usuario, mientras
+    // la pantalla de carga de arriba nunca desaparece. window.top
+    // apunta siempre a la ventana/pestaña más externa, así que esto
+    // "rompe" cualquier iframe contenedor y navega lo que el usuario
+    // realmente está mirando. Como el iframe es same-origin (mismo
+    // dominio), esto no debería estar bloqueado por CORS.
+    try {
+      window.top.location.replace(target);
+    } catch (e) {
+      // Si por lo que sea window.top no fuera accesible (cross-origin
+      // inesperado), caemos al comportamiento anterior como último
+      // recurso, en vez de no hacer nada.
+      window.location.replace(target);
+    }
   }
 
   var reloj = setInterval(function () {
