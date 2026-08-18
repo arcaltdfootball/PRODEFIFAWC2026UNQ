@@ -1,0 +1,19 @@
+# OPCIONAL pero recomendado: si el hosting de la app (por ejemplo
+# Streamlit Community Cloud) la "duerme" tras un rato sin visitas, este
+# workflow le pega un ping cada 10 minutos para que nunca esté fría
+# justo cuando alguien vuelve de pagar en Mercado Pago.
+#
+# Reemplazá APP_URL por la URL pública real de la app.
+name: keep-alive-prode
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping app
+        run: curl -fsS --max-time 20 "https://TU-APP-AQUI.streamlit.app/" || true
