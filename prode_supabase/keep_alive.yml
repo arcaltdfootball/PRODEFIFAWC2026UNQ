@@ -16,4 +16,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping app
-        run: curl -fsS --max-time 20 "https://TU-APP-AQUI.streamlit.app/" || true
+        run: curl -fsS --max-time 20 "https://futbolargentino2026.streamlit.app/" || true
