@@ -974,43 +974,37 @@ with st.sidebar:
                             st.error(f"Error al crear la cuenta: {e}")
 
 
+_MESES_ES = {
+    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+    5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+    9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre",
+}
+
+
 def _mes_actual_boleta():
     """
-    Determina el mes "actual" de juego para mostrarlo en la Boleta Mensual,
-    tomando la Fecha (jornada) del fixture más cercana a hoy —la que se está
-    jugando o la próxima— y buscando a qué mes está asignada esa Fecha en
-    `fecha_mes_map`: la MISMA tabla que ya usa el ranking mensual (ver la
-    pestaña "Meses" del admin). Devuelve (fecha_numero, mes) o (None, None)
-    si todavía no hay ninguna Fecha asignada a un mes.
+    Determina el mes "actual" para mostrarlo en la Boleta Mensual.
+
+    Antes esto se calculaba buscando la Fecha (jornada) del fixture más
+    cercana a hoy y fijándose a qué mes estaba asignada esa Fecha en
+    `fecha_mes_map` (pestaña "Meses" del admin). El problema: si todavía
+    no se habían asignado las Fechas del mes en curso en esa tabla, la
+    función devolvía el último mes que SÍ estaba mapeado (ej. "Agosto"
+    seguía apareciendo ya estando en Septiembre), porque buscaba la
+    fecha_numero más cercana SOLO entre las que ya tenían mes asignado.
+
+    Ahora se toma directamente el mes calendario real de hoy (según la
+    hora de Argentina), así el chip de la Boleta siempre muestra el mes
+    en curso apenas cambia, sin depender de que el admin haya cargado la
+    asignación en `fecha_mes_map`. Esa tabla se sigue usando tal cual para
+    el ranking mensual (pestaña "Meses"/página de Ranking); esto solo
+    afecta el texto que se muestra acá.
+
+    Devuelve (None, mes) donde `mes` es un string tipo "Septiembre 2026".
     """
-    try:
-        _partidos_m = sb.table("partidos").select("fecha_numero, fecha_partido").execute().data or []
-        _map_m = sb.table("fecha_mes_map").select("fecha_numero, mes").execute().data or []
-    except Exception:
-        return None, None
-
-    _mes_por_fn = {r["fecha_numero"]: r["mes"] for r in _map_m if r.get("mes")}
-    if not _mes_por_fn:
-        return None, None
-
     hoy = datetime.now(TZ_ARG).date()
-    _fechas_por_fn = {}
-    for p in _partidos_m:
-        fn = p.get("fecha_numero")
-        fp = _parsear_fecha(p.get("fecha_partido"))
-        if fn is None or fp is None or fn not in _mes_por_fn:
-            continue
-        _fechas_por_fn.setdefault(fn, []).append(fp)
-
-    mejor_fn, mejor_dist = None, None
-    for fn, fechas in _fechas_por_fn.items():
-        dist = min(abs((fp - hoy).days) for fp in fechas)
-        if mejor_dist is None or dist < mejor_dist:
-            mejor_dist, mejor_fn = dist, fn
-
-    if mejor_fn is None:
-        return None, None
-    return mejor_fn, _mes_por_fn[mejor_fn]
+    mes = f"{_MESES_ES[hoy.month]} {hoy.year}"
+    return None, mes
 
 
 if st.session_state._recien_logueado:
