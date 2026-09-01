@@ -297,46 +297,6 @@ _CSS_GLOBAL = """
     line-height: 1.55; color: rgba(255,255,255,0.9);
 }
 
-/* ── AVISO IMPORTANTE — VERSIÓN POP-UP (overlay con blur) ─────────────── */
-.aviso-overlay-backdrop {
-    position: fixed; inset: 0; z-index: 9998;
-    background: rgba(6,8,16,0.72);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-    display: flex; align-items: flex-start; justify-content: center;
-    padding: 8vh 16px 16px;
-    animation: aviso-fade-in 0.22s ease-out;
-}
-@keyframes aviso-fade-in {
-    from { opacity: 0; } to { opacity: 1; }
-}
-.aviso-overlay-backdrop .home-aviso-wrap {
-    margin: 0; width: 100%; max-width: 640px;
-    animation: aviso-pop-in 0.25s ease-out;
-}
-@keyframes aviso-pop-in {
-    from { opacity: 0; transform: translateY(-14px) scale(0.98); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-/* Botón "Cerrar" nativo de Streamlit, reposicionado para que quede pegado
-   arriba a la derecha, por encima del overlay. Se apunta directo por la
-   `key` del botón (Streamlit agrega la clase `st-key-<key>` al contenedor
-   del widget), así que esto afecta SOLO a este botón puntual y no a
-   ningún otro st.button del resto de la página. */
-.st-key-btn_cerrar_aviso {
-    position: fixed !important; top: calc(8vh + 14px); right: max(16px, calc(50% - 306px));
-    z-index: 9999;
-}
-.st-key-btn_cerrar_aviso button {
-    width: 34px; height: 34px; border-radius: 50%; padding: 0;
-    background: rgba(20,10,10,0.75); border: 1px solid rgba(255,120,120,0.6);
-    color: #FF8A8A; font-weight: 700; line-height: 1;
-    display: flex; align-items: center; justify-content: center;
-}
-.st-key-btn_cerrar_aviso button:hover {
-    background: rgba(255,80,80,0.28); border-color: #FF6B6B; color: #fff;
-}
-
-
 /* ── POZO — TARJETA "BOLETO" ──────────────────────────────────────────── */
 .home-pozo-wrap { max-width: 620px; margin: 8px auto 36px; }
 .home-pozo-card {
@@ -619,18 +579,14 @@ st.markdown(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# AVISOS IMPORTANTES — como pop-up interno (overlay con blur), cerrable
+# AVISOS IMPORTANTES
 # ══════════════════════════════════════════════════════════════════════════
-if "aviso_cerrado" not in st.session_state:
-    st.session_state.aviso_cerrado = False
-
-if AVISOS_IMPORTANTES and not st.session_state.aviso_cerrado:
+if AVISOS_IMPORTANTES:
     avisos_html = "".join(
         f'<div class="home-aviso-item"><span class="home-aviso-bar"></span><p>{aviso}</p></div>'
         for aviso in AVISOS_IMPORTANTES
     )
     st.markdown(
-        '<div class="aviso-overlay-backdrop">'
         '<div class="home-aviso-wrap">'
         '<div class="home-aviso-card">'
         '<div class="home-aviso-head">'
@@ -639,16 +595,9 @@ if AVISOS_IMPORTANTES and not st.session_state.aviso_cerrado:
         '</div>'
         f'<div class="home-aviso-list">{avisos_html}</div>'
         '</div>'
-        '</div>'
         '</div>',
         unsafe_allow_html=True,
     )
-    # El botón de abajo se reposiciona por CSS usando su propia `key`
-    # (ver `.st-key-btn_cerrar_aviso` más arriba), para que quede pegado
-    # arriba a la derecha del pop-up, por encima del blur.
-    if st.button("✕", key="btn_cerrar_aviso", help="Cerrar aviso"):
-        st.session_state.aviso_cerrado = True
-        st.rerun()
 
 
 
