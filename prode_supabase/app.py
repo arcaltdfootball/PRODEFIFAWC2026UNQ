@@ -325,6 +325,14 @@ _CSS_GLOBAL = """
     letter-spacing: 0.34em; text-transform: uppercase; color: rgba(232,201,107,0.75);
     text-align: center; margin-bottom: 8px;
 }
+.home-pozo-mes {
+    display: block; width: fit-content; margin: 0 auto 14px;
+    font-family: 'Inter', sans-serif; font-size: 0.68rem; font-weight: 700;
+    letter-spacing: 0.12em; text-transform: uppercase; color: #0a0f23;
+    background: linear-gradient(135deg, #FFD700, #E8C96B);
+    border-radius: 999px; padding: 4px 14px;
+    box-shadow: 0 2px 10px rgba(232,201,107,0.35);
+}
 .home-pozo-monto {
     font-family: 'Bebas Neue', sans-serif; font-size: clamp(3rem, 10vw, 5.6rem);
     line-height: 1; text-align: center; color: #FFD700; letter-spacing: 0.03em;
@@ -489,7 +497,7 @@ if AVISOS_IMPORTANTES:
 # ══════════════════════════════════════════════════════════════════════════
 try:
     from database import conectar
-    from ranking import obtener_ranking_mes_actual
+    from ranking import obtener_ranking_mes_actual, obtener_mes_actual_label
 
     sb = conectar()
     resp_part = sb.table("jugadores").select("id, pagado, activo").execute()
@@ -507,6 +515,7 @@ try:
     # esta tarjeta muestra al líder "del mes", y no debe seguir mostrando
     # los puntos ya acumulados del mes anterior apenas arranca uno nuevo.
     ranking = obtener_ranking_mes_actual()
+    mes_actual_label = obtener_mes_actual_label()
 
     if ranking:
         max_puntos = ranking[0]["puntos"]
@@ -570,6 +579,7 @@ try:
         '<div class="home-pozo-wrap">'
         '<div class="home-pozo-card">'
         f'{logo_header_html}'
+        f'<div class="home-pozo-mes">{mes_actual_label}</div>'
         '<div class="home-pozo-kicker">Premio total acumulado</div>'
         f'<div class="home-pozo-monto">{pozo_fmt}</div>'
         f'<div class="home-pozo-sub">{total_participantes} participantes · $10.000 c/u</div>'
