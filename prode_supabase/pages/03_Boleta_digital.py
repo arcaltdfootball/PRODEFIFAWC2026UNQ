@@ -2070,8 +2070,12 @@ def _tab_resultados_fragment():
                         por_zona[zona][fecha],
                         key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
                     )
-                    with st.expander(f"Fecha {fecha}"):
-                        clave_fecha = f"{zona}_{fecha}"
+                    clave_fecha = f"{zona}_{fecha}"
+                    # Clave en session_state para que el expander de esta Fecha
+                    # se mantenga abierto después de guardar/resetear algo adentro
+                    # (por defecto Streamlit lo volvería a cerrar en cada rerun).
+                    _exp_fecha_key = f"exp_open_fecha_{clave_fecha}"
+                    with st.expander(f"Fecha {fecha}", expanded=st.session_state.get(_exp_fecha_key, False)):
                         ids_partidos_fecha = [p["id"] for p in partidos_fecha]
 
                         # ── Resetear la fecha completa (todos sus partidos) ───
@@ -2127,6 +2131,7 @@ def _tab_resultados_fragment():
                                         st.cache_data.clear()
                                         _invalidar_cache_pron()  # cambió "puntos" de todos los jugadores
                                         st.session_state.confirmar_reset_fecha = None
+                                        st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Fecha {fecha} reseteada por completo.", icon="🔄")
                                         st.rerun()
                                     except Exception as e:
@@ -2139,6 +2144,7 @@ def _tab_resultados_fragment():
                                     use_container_width=True,
                                 ):
                                     st.session_state.confirmar_reset_fecha = None
+                                    st.session_state[_exp_fecha_key] = True
                                     st.rerun()
                         else:
                             if st.button(
@@ -2150,6 +2156,7 @@ def _tab_resultados_fragment():
                                 ),
                             ):
                                 st.session_state.confirmar_reset_fecha = clave_fecha
+                                st.session_state[_exp_fecha_key] = True
                                 st.rerun()
 
                         st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
@@ -2250,6 +2257,12 @@ def _tab_resultados_fragment():
                                             .execute()
                                             .data or []
                                         )
+                                        # Antes esto hacía un UPDATE por cada pronóstico (uno
+                                        # por jugador, uno por uno contra la base = lento con
+                                        # muchos jugadores). Ahora se calculan todos los puntos
+                                        # en memoria y se mandan en un solo pedido (upsert por
+                                        # id), sin cambiar el resultado del cálculo.
+                                        puntos_a_guardar = []
                                         for pr in prons:
                                             gl_pr = pr.get("goles_local_pred")
                                             gv_pr = pr.get("goles_visitante_pred")
@@ -2265,11 +2278,15 @@ def _tab_resultados_fragment():
                                                 pts = 1
                                             else:
                                                 pts = 0
-                                            sb.table("pronosticos").update({"puntos": pts}).eq("id", pr["id"]).execute()
+                                            puntos_a_guardar.append({"id": pr["id"], "puntos": pts})
+
+                                        if puntos_a_guardar:
+                                            sb.table("pronosticos").upsert(puntos_a_guardar).execute()
 
                                         cargar_partidos.clear()
                                         st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
                                         _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
+                                        st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
                                         st.rerun()
                                     except Exception as e:
@@ -2312,6 +2329,7 @@ def _tab_resultados_fragment():
                                         cargar_partidos.clear()
                                         st.cache_data.clear()
                                         _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
+                                        st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Partido {local} vs {visitante} reseteado a no disputado.", icon="🔄")
                                         st.rerun()
                                     except Exception as e:
@@ -2323,7 +2341,11 @@ def _tab_resultados_fragment():
                             # base de datos, el admin puede hacerlo a mano desde
                             # acá (fecha y hora usadas para calcular el cierre
                             # del pronóstico de ese partido).
-                            with st.expander(f"🕒 Modificar horario — {local} vs {visitante}"):
+                            _exp_horario_key = f"exp_open_horario_{p['id']}"
+                            with st.expander(
+                                f"🕒 Modificar horario — {local} vs {visitante}",
+                                expanded=st.session_state.get(_exp_horario_key, False),
+                            ):
                                 _fecha_actual_h = _parsear_fecha(p.get("fecha_partido")) or datetime.now(TZ_ARG).date()
                                 _hora_actual_h = _parsear_hora(p.get("hora")) or datetime.now(TZ_ARG).time().replace(second=0, microsecond=0)
                                 ch1, ch2, ch3 = st.columns([1, 1, 1])
@@ -2370,6 +2392,8 @@ def _tab_resultados_fragment():
 
                                             cargar_partidos.clear()
                                             st.cache_data.clear()
+                                            st.session_state[_exp_fecha_key] = True
+                                            st.session_state[_exp_horario_key] = True
                                             st.toast(
                                                 f"Horario actualizado: {nueva_fecha_h.strftime('%d/%m/%Y')} "
                                                 f"{nueva_hora_h.strftime('%H:%M')}",
@@ -2387,363 +2411,392 @@ def _tab_resultados_fragment():
 _tab_resultados_fragment()
 
 # ── Tab 2: administrar jugadores ──────────────────────────────────────────
-with tab_jugadores:
+@st.fragment
+def _tab_jugadores_fragment():
+    """
+    Igual que `_tab_resultados_fragment`: aislar toda la pestaña 'Jugadores'
+    en un @st.fragment hace que tocar algo acá (pagar, pausar, eliminar,
+    etc.) sólo vuelva a correr esta pestaña y no toda la página/las otras
+    pestañas del panel admin.
+    """
+    with tab_jugadores:
 
-    # ── Crear jugador ────────────────────────────────────────────────────
-    st.subheader("➕ Crear jugador manualmente")
-    with st.form("form_nuevo_jugador"):
-        nombre_adm = st.text_input("Nombre")
-        user_adm   = st.text_input("Usuario")
-        crear_adm  = st.form_submit_button("Crear jugador (contraseña autogenerada)")
-        if crear_adm:
-            if not (nombre_adm.strip() and user_adm.strip()):
-                st.warning("Completá nombre y usuario.")
-            else:
-                try:
-                    existe = sb.table("jugadores").select("id").eq("username", user_adm.strip().lower()).execute()
-                    if existe.data:
-                        st.error("Ese usuario ya existe.")
-                    else:
-                        pwd_gen = _generar_password(8)
-                        sb.table("jugadores").insert({
-                            "nombre":         nombre_adm.strip(),
-                            "username":       user_adm.strip().lower(),
-                            "password_hash":  _hash_pwd(pwd_gen),
-                            "password_plano": pwd_gen,
-                        }).execute()
-                        st.success(
-                            f"Jugador creado. Usuario: `{user_adm.strip().lower()}` · "
-                            f"Contraseña: `{pwd_gen}` (copiala ahora)."
-                        )
-                except Exception as e:
-                    st.error(f"Error al crear jugador: {e}")
-
-    st.divider()
-
-    # ── Reset total ───────────────────────────────────────────────────────
-    st.subheader("🔴 Resetear lista completa de participantes")
-    st.warning(
-        "⚠️ Esto **elimina TODOS los jugadores y sus pronósticos**. "
-        "La acción es irreversible."
-    )
-
-    if not st.session_state.confirmar_reset_all:
-        if st.button("🗑️ Eliminar TODOS los participantes", type="secondary"):
-            st.session_state.confirmar_reset_all = True
-            st.rerun()
-    else:
-        st.error("¿Estás seguro? Esta acción no se puede deshacer.")
-        col_si, col_no = st.columns(2)
-        with col_si:
-            if st.button("✅ Sí, eliminar todo", type="primary"):
-                try:
-                    # Borrar pronósticos primero (FK), luego jugadores
-                    sb.table("pronosticos").delete().neq("id", 0).execute()
-                    sb.table("jugadores").delete().neq("id", 0).execute()
-
-                    # Verificación real con SELECT fresco (no confiar solo en
-                    # que no haya habido excepción, por el mismo motivo que
-                    # con los resultados: Supabase puede no tirar error aunque
-                    # no borre nada, p.ej. por RLS o por FKs).
-                    quedan = sb.table("jugadores").select("id").execute().data or []
-                    if quedan:
-                        st.error(
-                            f"⚠️ Se ejecutó el borrado pero todavía quedan {len(quedan)} "
-                            "jugadores en la base. Revisar RLS (policy de DELETE) o "
-                            "restricciones de foreign key."
-                        )
-                    else:
-                        st.session_state.confirmar_reset_all = False
-                        st.toast("✅ Lista de participantes reseteada.", icon="🗑️")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Error al resetear: {e}")
-                    st.exception(e)
-        with col_no:
-            if st.button("❌ Cancelar"):
-                st.session_state.confirmar_reset_all = False
-                st.rerun()
-
-    st.divider()
-
-    # ── Marcar a TODOS como NO pagada la inscripción (masivo) ─────────────
-    st.subheader("💸 Marcar a todos como NO pagada la inscripción")
-    st.caption(
-        "Pone `pagado = No` a **todos** los jugadores de una sola vez, en vez "
-        "de tener que desmarcarlos uno por uno. Útil para arrancar una nueva "
-        "instancia/mes del Prode desde cero en materia de pagos. No toca el "
-        "estado de pausado/activo de nadie."
-    )
-
-    if not st.session_state.confirmar_marcar_no_pagado_todos:
-        if st.button("💸 Marcar TODOS como NO pagado", type="secondary"):
-            st.session_state.confirmar_marcar_no_pagado_todos = True
-            st.rerun()
-    else:
-        st.error(
-            "¿Confirmás marcar a **todos** los jugadores como NO pagada la "
-            "inscripción? Van a dejar de poder cargar boleta hasta que "
-            "vuelvan a pagar (o hasta que los marques pagados de nuevo)."
-        )
-        col_mp_si, col_mp_no = st.columns(2)
-        with col_mp_si:
-            if st.button("✅ Sí, marcar a todos como NO pagado", type="primary"):
-                try:
-                    sb.table("jugadores").update({"pagado": False}).neq("id", 0).execute()
-
-                    # Verificación real con SELECT fresco
-                    verif_pago = sb.table("jugadores").select("id, pagado").execute().data or []
-                    aun_pagados = [f["id"] for f in verif_pago if f.get("pagado")]
-                    if aun_pagados:
-                        st.error(
-                            "⚠️ Se ejecutó la acción pero los jugadores "
-                            f"{aun_pagados} siguen marcados como pagados en la "
-                            "base. Revisar RLS/triggers."
-                        )
-                    else:
-                        st.session_state.confirmar_marcar_no_pagado_todos = False
-                        st.toast("✅ Todos los jugadores quedaron como NO pagado.", icon="💸")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Error al actualizar los pagos: {e}")
-                    st.exception(e)
-        with col_mp_no:
-            if st.button("❌ Cancelar", key="cancelar_marcar_no_pagado_todos"):
-                st.session_state.confirmar_marcar_no_pagado_todos = False
-                st.rerun()
-
-    st.divider()
-
-    # ── Lista jugadores: editar nombre/usuario, ver/modificar contraseña, eliminar ──
-    # Todo lo de acá abajo vive dentro de `tab_jugadores`, que a su vez está
-    # dentro del bloque `if st.session_state.es_admin:` de la página → solo
-    # el admin puede ver y usar estos controles.
-    st.subheader("👥 Jugadores registrados")
-    try:
-        jugadores_resp = (
-            sb.table("jugadores")
-            .select("id, nombre, username, password_plano, pagado, activo, alias_cbu, mp_payment_id")
-            .order("nombre")
-            .execute()
-        )
-        jugadores = jugadores_resp.data or []
-    except Exception as e:
-        st.error(f"No se pudo listar jugadores: {e}")
-        jugadores = []
-
-    if not jugadores:
-        st.info("Todavía no hay jugadores registrados.")
-    else:
-        _n_activos_pagos = sum(1 for j in jugadores if j.get("pagado") and j.get("activo", True))
-        st.caption(f"🏆 Participantes habilitados para el pozo: **{_n_activos_pagos}** de {len(jugadores)} registrados")
-
-        for j in jugadores:
-            _pago_ok = j.get("pagado")
-            _esta_activo = j.get("activo", True)
-            if not _esta_activo:
-                _icono_pago = "⏸️"
-            elif _pago_ok:
-                _icono_pago = "✅"
-            else:
-                _icono_pago = "🔴"
-            with st.expander(f"{_icono_pago} {j['nombre']}  ·  @{j.get('username', '—')}"):
-
-                # ── Estado de pago (marcar manual, ej. pagó en efectivo) ──
-                if _pago_ok:
-                    st.success("💰 Inscripción pagada")
-                    if j.get("mp_payment_id"):
-                        st.caption(f"ID de pago en MP: `{j['mp_payment_id']}`")
-                    if st.button("↩️ Marcar como NO pagada", key=f"despagar_{j['id']}"):
-                        sb.table("jugadores").update({"pagado": False}).eq("id", j["id"]).execute()
-                        st.rerun()
+        # ── Crear jugador ────────────────────────────────────────────────────
+        st.subheader("➕ Crear jugador manualmente")
+        with st.form("form_nuevo_jugador"):
+            nombre_adm = st.text_input("Nombre")
+            user_adm   = st.text_input("Usuario")
+            crear_adm  = st.form_submit_button("Crear jugador (contraseña autogenerada)")
+            if crear_adm:
+                if not (nombre_adm.strip() and user_adm.strip()):
+                    st.warning("Completá nombre y usuario.")
                 else:
-                    st.error("💰 Inscripción NO pagada")
-
-                    # Chequeo real contra Mercado Pago: para el caso de un
-                    # jugador que dice haber pagado pero el redirect nunca
-                    # lo confirmó (WhatsApp/Instagram/Safari/app del banco
-                    # que no vuelven bien al sitio). Este botón busca en la
-                    # API de MP cualquier pago aprobado con
-                    # external_reference = id de este jugador, sin importar
-                    # qué haya pasado con la vuelta del navegador.
-                    if st.button(
-                        "🔄 Verificar pago en Mercado Pago",
-                        key=f"verificar_mp_{j['id']}",
-                        help="Le pregunta directo a Mercado Pago si hay un "
-                             "pago aprobado a nombre de este jugador, sin "
-                             "depender de que el redirect haya funcionado.",
-                    ):
-                        with st.spinner("Consultando con Mercado Pago..."):
-                            if verificar_pago_por_referencia(j["id"]):
-                                st.success(
-                                    f"✅ Encontramos un pago aprobado a nombre de "
-                                    f"{j['nombre']}. Se marcó como pagada."
-                                )
-                                st.rerun()
-                            else:
-                                st.warning(
-                                    "No encontramos ningún pago aprobado con este "
-                                    "jugador como referencia en Mercado Pago. Si "
-                                    "estás seguro/a de que pagó (ej. por otro "
-                                    "medio, transferencia directa, efectivo), "
-                                    "usá el botón de abajo para marcarlo a mano."
-                                )
-
-                    if st.button("✅ Marcar como pagada (manual)", key=f"pagar_{j['id']}"):
-                        sb.table("jugadores").update({"pagado": True}).eq("id", j["id"]).execute()
-                        st.rerun()
-
-                # ── Alias/CBU para transferir el premio si gana ───────────
-                st.caption("💸 Alias / CBU para transferir el premio")
-                _alias_admin_actual = (j.get("alias_cbu") or "").strip()
-                if _alias_admin_actual:
-                    st.code(_alias_admin_actual, language=None)
-                else:
-                    st.caption("Todavía no cargó Alias/CBU.")
-                with st.form(f"form_alias_admin_{j['id']}"):
-                    _nuevo_alias_admin = st.text_input(
-                        "Corregir Alias/CBU", value=_alias_admin_actual,
-                        key=f"alias_admin_{j['id']}",
-                    )
-                    if st.form_submit_button("💾 Guardar Alias/CBU"):
-                        sb.table("jugadores").update(
-                            {"alias_cbu": _nuevo_alias_admin.strip()}
-                        ).eq("id", j["id"]).execute()
-                        st.toast(f"Alias/CBU de {j['nombre']} actualizado.", icon="💾")
-                        st.rerun()
-
-                # ── Ocultar/pausar manualmente (sin eliminar) ─────────────
-                # Útil si una fecha el jugador decide no participar: lo saca
-                # del pozo y del listado activo sin borrar su cuenta ni su
-                # historial.
-                if _esta_activo:
-                    st.info("👁️ Visible y habilitado para participar")
-                    if st.button("⏸️ Ocultar / pausar participante", key=f"pausar_{j['id']}"):
-                        sb.table("jugadores").update({"activo": False}).eq("id", j["id"]).execute()
-                        st.rerun()
-                else:
-                    st.warning("⏸️ Oculto / pausado (no cuenta para el pozo, no puede jugar)")
-                    if st.button("▶️ Reactivar participante", key=f"reactivar_{j['id']}"):
-                        sb.table("jugadores").update({"activo": True}).eq("id", j["id"]).execute()
-                        st.rerun()
-
-                st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
-
-                # ── Editar nombre y usuario ───────────────────────────────
-                with st.form(f"form_editar_{j['id']}"):
-                    nuevo_nombre = st.text_input("Nombre", value=j["nombre"], key=f"nombre_{j['id']}")
-                    nuevo_user   = st.text_input("Usuario", value=j.get("username", ""), key=f"user_{j['id']}")
-                    guardar = st.form_submit_button("💾 Guardar cambios")
-                    if guardar:
-                        if not (nuevo_nombre.strip() and nuevo_user.strip()):
-                            st.warning("Nombre y usuario no pueden quedar vacíos.")
+                    try:
+                        existe = sb.table("jugadores").select("id").eq("username", user_adm.strip().lower()).execute()
+                        if existe.data:
+                            st.error("Ese usuario ya existe.")
                         else:
-                            nuevo_user_norm = nuevo_user.strip().lower()
-                            try:
-                                # Chequear que el usuario no esté en uso por OTRO jugador
-                                choque = (
-                                    sb.table("jugadores")
-                                    .select("id")
-                                    .eq("username", nuevo_user_norm)
-                                    .neq("id", j["id"])
-                                    .execute()
-                                )
-                                if choque.data:
-                                    st.error("Ese usuario ya lo está usando otro jugador.")
-                                else:
-                                    sb.table("jugadores").update({
-                                        "nombre":   nuevo_nombre.strip(),
-                                        "username": nuevo_user_norm,
-                                    }).eq("id", j["id"]).execute()
-                                    st.cache_data.clear()
-                                    st.toast("Datos actualizados.", icon="✅")
-                                    st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al actualizar: {e}")
-                                st.exception(e)
+                            pwd_gen = _generar_password(8)
+                            sb.table("jugadores").insert({
+                                "nombre":         nombre_adm.strip(),
+                                "username":       user_adm.strip().lower(),
+                                "password_hash":  _hash_pwd(pwd_gen),
+                                "password_plano": pwd_gen,
+                            }).execute()
+                            st.success(
+                                f"Jugador creado. Usuario: `{user_adm.strip().lower()}` · "
+                                f"Contraseña: `{pwd_gen}` (copiala ahora)."
+                            )
+                    except Exception as e:
+                        st.error(f"Error al crear jugador: {e}")
 
-                st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+        st.divider()
 
-                # ── Ver contraseña actual ─────────────────────────────────
-                st.caption("🔑 Contraseña actual")
-                pwd_actual = j.get("password_plano")
-                if pwd_actual:
-                    st.code(pwd_actual, language=None)
-                else:
-                    st.caption(
-                        "No disponible (se creó/reseteó antes de guardar la contraseña "
-                        "en texto plano). Establecé una nueva abajo para poder verla."
-                    )
+        # ── Reset total ───────────────────────────────────────────────────────
+        st.subheader("🔴 Resetear lista completa de participantes")
+        st.warning(
+            "⚠️ Esto **elimina TODOS los jugadores y sus pronósticos**. "
+            "La acción es irreversible."
+        )
 
-                # ── Modificar contraseña a una elegida por el admin ───────
-                with st.form(f"form_pwd_manual_{j['id']}"):
-                    pwd_manual = st.text_input(
-                        "Nueva contraseña (a elección)", key=f"pwd_manual_{j['id']}"
-                    )
-                    fijar = st.form_submit_button("✏️ Establecer esta contraseña")
-                    if fijar:
-                        if not pwd_manual.strip():
-                            st.warning("Escribí una contraseña.")
+        if not st.session_state.confirmar_reset_all:
+            if st.button("🗑️ Eliminar TODOS los participantes", type="secondary"):
+                st.session_state.confirmar_reset_all = True
+                st.rerun()
+        else:
+            st.error("¿Estás seguro? Esta acción no se puede deshacer.")
+            col_si, col_no = st.columns(2)
+            with col_si:
+                if st.button("✅ Sí, eliminar todo", type="primary"):
+                    try:
+                        # Borrar pronósticos primero (FK), luego jugadores
+                        sb.table("pronosticos").delete().neq("id", 0).execute()
+                        sb.table("jugadores").delete().neq("id", 0).execute()
+
+                        # Verificación real con SELECT fresco (no confiar solo en
+                        # que no haya habido excepción, por el mismo motivo que
+                        # con los resultados: Supabase puede no tirar error aunque
+                        # no borre nada, p.ej. por RLS o por FKs).
+                        quedan = sb.table("jugadores").select("id").execute().data or []
+                        if quedan:
+                            st.error(
+                                f"⚠️ Se ejecutó el borrado pero todavía quedan {len(quedan)} "
+                                "jugadores en la base. Revisar RLS (policy de DELETE) o "
+                                "restricciones de foreign key."
+                            )
                         else:
-                            sb.table("jugadores").update({
-                                "password_hash":  _hash_pwd(pwd_manual.strip()),
-                                "password_plano": pwd_manual.strip(),
-                            }).eq("id", j["id"]).execute()
-                            st.toast(f"Contraseña de {j['nombre']} actualizada.", icon="🔑")
+                            st.session_state.confirmar_reset_all = False
+                            st.toast("✅ Lista de participantes reseteada.", icon="🗑️")
                             st.rerun()
-
-                # ── Resetear contraseña (autogenerada) ────────────────────
-                if st.button("🎲 Generar contraseña aleatoria", key=f"reset_{j['id']}"):
-                    nueva_pwd = _generar_password(8)
-                    sb.table("jugadores").update({
-                        "password_hash":  _hash_pwd(nueva_pwd),
-                        "password_plano": nueva_pwd,
-                    }).eq("id", j["id"]).execute()
-                    st.success(f"Nueva contraseña para **{j['nombre']}**: `{nueva_pwd}`")
+                    except Exception as e:
+                        st.error(f"Error al resetear: {e}")
+                        st.exception(e)
+            with col_no:
+                if st.button("❌ Cancelar"):
+                    st.session_state.confirmar_reset_all = False
                     st.rerun()
 
-                st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+        st.divider()
 
-                # ── Eliminar jugador con confirmación inline ──────────────
-                if st.session_state.confirmar_eliminar_id == j["id"]:
-                    st.markdown(f"**¿Eliminar {j['nombre']}?**")
-                    col_si2, col_no2 = st.columns(2)
-                    with col_si2:
-                        if st.button("✅ Sí, eliminar", key=f"del_si_{j['id']}", use_container_width=True):
-                            try:
-                                # Borrar pronósticos del jugador primero
-                                sb.table("pronosticos").delete().eq("jugador_id", j["id"]).execute()
-                                sb.table("jugadores").delete().eq("id", j["id"]).execute()
+        # ── Marcar a TODOS como NO pagada la inscripción (masivo) ─────────────
+        st.subheader("💸 Marcar a todos como NO pagada la inscripción")
+        st.caption(
+            "Pone `pagado = No` a **todos** los jugadores de una sola vez, en vez "
+            "de tener que desmarcarlos uno por uno. Útil para arrancar una nueva "
+            "instancia/mes del Prode desde cero en materia de pagos. No toca el "
+            "estado de pausado/activo de nadie."
+        )
 
-                                # Verificación real con SELECT fresco
-                                sigue = (
-                                    sb.table("jugadores")
-                                    .select("id")
-                                    .eq("id", j["id"])
-                                    .execute()
-                                    .data
-                                )
-                                if sigue:
-                                    st.error(
-                                        f"⚠️ Se ejecutó el borrado pero {j['nombre']} sigue "
-                                        "en la base. Revisar RLS (policy de DELETE) o FKs."
-                                    )
-                                else:
-                                    st.session_state.confirmar_eliminar_id = None
-                                    st.toast(f"Jugador {j['nombre']} eliminado.", icon="🗑️")
-                                    st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al eliminar: {e}")
-                                st.exception(e)
-                    with col_no2:
-                        if st.button("❌ No", key=f"del_no_{j['id']}", use_container_width=True):
-                            st.session_state.confirmar_eliminar_id = None
+        if not st.session_state.confirmar_marcar_no_pagado_todos:
+            if st.button("💸 Marcar TODOS como NO pagado", type="secondary"):
+                st.session_state.confirmar_marcar_no_pagado_todos = True
+                st.rerun()
+        else:
+            st.error(
+                "¿Confirmás marcar a **todos** los jugadores como NO pagada la "
+                "inscripción? Van a dejar de poder cargar boleta hasta que "
+                "vuelvan a pagar (o hasta que los marques pagados de nuevo)."
+            )
+            col_mp_si, col_mp_no = st.columns(2)
+            with col_mp_si:
+                if st.button("✅ Sí, marcar a todos como NO pagado", type="primary"):
+                    try:
+                        sb.table("jugadores").update({"pagado": False}).neq("id", "00000000-0000-0000-0000-000000000000").execute()
+
+                        # Verificación real con SELECT fresco
+                        verif_pago = sb.table("jugadores").select("id, pagado").execute().data or []
+                        aun_pagados = [f["id"] for f in verif_pago if f.get("pagado")]
+                        if aun_pagados:
+                            st.error(
+                                "⚠️ Se ejecutó la acción pero los jugadores "
+                                f"{aun_pagados} siguen marcados como pagados en la "
+                                "base. Revisar RLS/triggers."
+                            )
+                        else:
+                            st.session_state.confirmar_marcar_no_pagado_todos = False
+                            st.toast("✅ Todos los jugadores quedaron como NO pagado.", icon="💸")
                             st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al actualizar los pagos: {e}")
+                        st.exception(e)
+            with col_mp_no:
+                if st.button("❌ Cancelar", key="cancelar_marcar_no_pagado_todos"):
+                    st.session_state.confirmar_marcar_no_pagado_todos = False
+                    st.rerun()
+
+        st.divider()
+
+        # ── Lista jugadores: editar nombre/usuario, ver/modificar contraseña, eliminar ──
+        # Todo lo de acá abajo vive dentro de `tab_jugadores`, que a su vez está
+        # dentro del bloque `if st.session_state.es_admin:` de la página → solo
+        # el admin puede ver y usar estos controles.
+        st.subheader("👥 Jugadores registrados")
+        try:
+            jugadores_resp = (
+                sb.table("jugadores")
+                .select("id, nombre, username, password_plano, pagado, activo, alias_cbu, mp_payment_id")
+                .order("nombre")
+                .execute()
+            )
+            jugadores = jugadores_resp.data or []
+        except Exception as e:
+            st.error(f"No se pudo listar jugadores: {e}")
+            jugadores = []
+
+        if not jugadores:
+            st.info("Todavía no hay jugadores registrados.")
+        else:
+            _n_activos_pagos = sum(1 for j in jugadores if j.get("pagado") and j.get("activo", True))
+            st.caption(f"🏆 Participantes habilitados para el pozo: **{_n_activos_pagos}** de {len(jugadores)} registrados")
+
+            for j in jugadores:
+                _pago_ok = j.get("pagado")
+                _esta_activo = j.get("activo", True)
+                if not _esta_activo:
+                    _icono_pago = "⏸️"
+                elif _pago_ok:
+                    _icono_pago = "✅"
                 else:
-                    if st.button("🗑️ Eliminar jugador", key=f"del_{j['id']}"):
-                        st.session_state.confirmar_eliminar_id = j["id"]
+                    _icono_pago = "🔴"
+                # Igual que con las Fechas en "Cargar Resultados": se guarda en
+                # session_state si este jugador estaba con el acordeón abierto,
+                # para que no se cierre solo después de pagar/pausar/eliminar/etc.
+                _exp_jugador_key = f"exp_open_jugador_{j['id']}"
+                with st.expander(
+                    f"{_icono_pago} {j['nombre']}  ·  @{j.get('username', '—')}",
+                    expanded=st.session_state.get(_exp_jugador_key, False),
+                ):
+
+                    # ── Estado de pago (marcar manual, ej. pagó en efectivo) ──
+                    if _pago_ok:
+                        st.success("💰 Inscripción pagada")
+                        if j.get("mp_payment_id"):
+                            st.caption(f"ID de pago en MP: `{j['mp_payment_id']}`")
+                        if st.button("↩️ Marcar como NO pagada", key=f"despagar_{j['id']}"):
+                            sb.table("jugadores").update({"pagado": False}).eq("id", j["id"]).execute()
+                            st.session_state[_exp_jugador_key] = True
+                            st.rerun()
+                    else:
+                        st.error("💰 Inscripción NO pagada")
+
+                        # Chequeo real contra Mercado Pago: para el caso de un
+                        # jugador que dice haber pagado pero el redirect nunca
+                        # lo confirmó (WhatsApp/Instagram/Safari/app del banco
+                        # que no vuelven bien al sitio). Este botón busca en la
+                        # API de MP cualquier pago aprobado con
+                        # external_reference = id de este jugador, sin importar
+                        # qué haya pasado con la vuelta del navegador.
+                        if st.button(
+                            "🔄 Verificar pago en Mercado Pago",
+                            key=f"verificar_mp_{j['id']}",
+                            help="Le pregunta directo a Mercado Pago si hay un "
+                                 "pago aprobado a nombre de este jugador, sin "
+                                 "depender de que el redirect haya funcionado.",
+                        ):
+                            with st.spinner("Consultando con Mercado Pago..."):
+                                if verificar_pago_por_referencia(j["id"]):
+                                    st.success(
+                                        f"✅ Encontramos un pago aprobado a nombre de "
+                                        f"{j['nombre']}. Se marcó como pagada."
+                                    )
+                                    st.session_state[_exp_jugador_key] = True
+                                    st.rerun()
+                                else:
+                                    st.warning(
+                                        "No encontramos ningún pago aprobado con este "
+                                        "jugador como referencia en Mercado Pago. Si "
+                                        "estás seguro/a de que pagó (ej. por otro "
+                                        "medio, transferencia directa, efectivo), "
+                                        "usá el botón de abajo para marcarlo a mano."
+                                    )
+
+                        if st.button("✅ Marcar como pagada (manual)", key=f"pagar_{j['id']}"):
+                            sb.table("jugadores").update({"pagado": True}).eq("id", j["id"]).execute()
+                            st.session_state[_exp_jugador_key] = True
+                            st.rerun()
+
+                    # ── Alias/CBU para transferir el premio si gana ───────────
+                    st.caption("💸 Alias / CBU para transferir el premio")
+                    _alias_admin_actual = (j.get("alias_cbu") or "").strip()
+                    if _alias_admin_actual:
+                        st.code(_alias_admin_actual, language=None)
+                    else:
+                        st.caption("Todavía no cargó Alias/CBU.")
+                    with st.form(f"form_alias_admin_{j['id']}"):
+                        _nuevo_alias_admin = st.text_input(
+                            "Corregir Alias/CBU", value=_alias_admin_actual,
+                            key=f"alias_admin_{j['id']}",
+                        )
+                        if st.form_submit_button("💾 Guardar Alias/CBU"):
+                            sb.table("jugadores").update(
+                                {"alias_cbu": _nuevo_alias_admin.strip()}
+                            ).eq("id", j["id"]).execute()
+                            st.toast(f"Alias/CBU de {j['nombre']} actualizado.", icon="💾")
+                            st.session_state[_exp_jugador_key] = True
+                            st.rerun()
+
+                    # ── Ocultar/pausar manualmente (sin eliminar) ─────────────
+                    # Útil si una fecha el jugador decide no participar: lo saca
+                    # del pozo y del listado activo sin borrar su cuenta ni su
+                    # historial.
+                    if _esta_activo:
+                        st.info("👁️ Visible y habilitado para participar")
+                        if st.button("⏸️ Ocultar / pausar participante", key=f"pausar_{j['id']}"):
+                            sb.table("jugadores").update({"activo": False}).eq("id", j["id"]).execute()
+                            st.session_state[_exp_jugador_key] = True
+                            st.rerun()
+                    else:
+                        st.warning("⏸️ Oculto / pausado (no cuenta para el pozo, no puede jugar)")
+                        if st.button("▶️ Reactivar participante", key=f"reactivar_{j['id']}"):
+                            sb.table("jugadores").update({"activo": True}).eq("id", j["id"]).execute()
+                            st.session_state[_exp_jugador_key] = True
+                            st.rerun()
+
+                    st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+
+                    # ── Editar nombre y usuario ───────────────────────────────
+                    with st.form(f"form_editar_{j['id']}"):
+                        nuevo_nombre = st.text_input("Nombre", value=j["nombre"], key=f"nombre_{j['id']}")
+                        nuevo_user   = st.text_input("Usuario", value=j.get("username", ""), key=f"user_{j['id']}")
+                        guardar = st.form_submit_button("💾 Guardar cambios")
+                        if guardar:
+                            if not (nuevo_nombre.strip() and nuevo_user.strip()):
+                                st.warning("Nombre y usuario no pueden quedar vacíos.")
+                            else:
+                                nuevo_user_norm = nuevo_user.strip().lower()
+                                try:
+                                    # Chequear que el usuario no esté en uso por OTRO jugador
+                                    choque = (
+                                        sb.table("jugadores")
+                                        .select("id")
+                                        .eq("username", nuevo_user_norm)
+                                        .neq("id", j["id"])
+                                        .execute()
+                                    )
+                                    if choque.data:
+                                        st.error("Ese usuario ya lo está usando otro jugador.")
+                                    else:
+                                        sb.table("jugadores").update({
+                                            "nombre":   nuevo_nombre.strip(),
+                                            "username": nuevo_user_norm,
+                                        }).eq("id", j["id"]).execute()
+                                        st.cache_data.clear()
+                                        st.toast("Datos actualizados.", icon="✅")
+                                        st.session_state[_exp_jugador_key] = True
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al actualizar: {e}")
+                                    st.exception(e)
+
+                    st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+
+                    # ── Ver contraseña actual ─────────────────────────────────
+                    st.caption("🔑 Contraseña actual")
+                    pwd_actual = j.get("password_plano")
+                    if pwd_actual:
+                        st.code(pwd_actual, language=None)
+                    else:
+                        st.caption(
+                            "No disponible (se creó/reseteó antes de guardar la contraseña "
+                            "en texto plano). Establecé una nueva abajo para poder verla."
+                        )
+
+                    # ── Modificar contraseña a una elegida por el admin ───────
+                    with st.form(f"form_pwd_manual_{j['id']}"):
+                        pwd_manual = st.text_input(
+                            "Nueva contraseña (a elección)", key=f"pwd_manual_{j['id']}"
+                        )
+                        fijar = st.form_submit_button("✏️ Establecer esta contraseña")
+                        if fijar:
+                            if not pwd_manual.strip():
+                                st.warning("Escribí una contraseña.")
+                            else:
+                                sb.table("jugadores").update({
+                                    "password_hash":  _hash_pwd(pwd_manual.strip()),
+                                    "password_plano": pwd_manual.strip(),
+                                }).eq("id", j["id"]).execute()
+                                st.toast(f"Contraseña de {j['nombre']} actualizada.", icon="🔑")
+                                st.session_state[_exp_jugador_key] = True
+                                st.rerun()
+
+                    # ── Resetear contraseña (autogenerada) ────────────────────
+                    if st.button("🎲 Generar contraseña aleatoria", key=f"reset_{j['id']}"):
+                        nueva_pwd = _generar_password(8)
+                        sb.table("jugadores").update({
+                            "password_hash":  _hash_pwd(nueva_pwd),
+                            "password_plano": nueva_pwd,
+                        }).eq("id", j["id"]).execute()
+                        st.success(f"Nueva contraseña para **{j['nombre']}**: `{nueva_pwd}`")
+                        st.session_state[_exp_jugador_key] = True
                         st.rerun()
 
+                    st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
+
+                    # ── Eliminar jugador con confirmación inline ──────────────
+                    if st.session_state.confirmar_eliminar_id == j["id"]:
+                        st.markdown(f"**¿Eliminar {j['nombre']}?**")
+                        col_si2, col_no2 = st.columns(2)
+                        with col_si2:
+                            if st.button("✅ Sí, eliminar", key=f"del_si_{j['id']}", use_container_width=True):
+                                try:
+                                    # Borrar pronósticos del jugador primero
+                                    sb.table("pronosticos").delete().eq("jugador_id", j["id"]).execute()
+                                    sb.table("jugadores").delete().eq("id", j["id"]).execute()
+
+                                    # Verificación real con SELECT fresco
+                                    sigue = (
+                                        sb.table("jugadores")
+                                        .select("id")
+                                        .eq("id", j["id"])
+                                        .execute()
+                                        .data
+                                    )
+                                    if sigue:
+                                        st.error(
+                                            f"⚠️ Se ejecutó el borrado pero {j['nombre']} sigue "
+                                            "en la base. Revisar RLS (policy de DELETE) o FKs."
+                                        )
+                                    else:
+                                        st.session_state.confirmar_eliminar_id = None
+                                        st.toast(f"Jugador {j['nombre']} eliminado.", icon="🗑️")
+                                        st.session_state[_exp_jugador_key] = True
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al eliminar: {e}")
+                                    st.exception(e)
+                        with col_no2:
+                            if st.button("❌ No", key=f"del_no_{j['id']}", use_container_width=True):
+                                st.session_state.confirmar_eliminar_id = None
+                                st.session_state[_exp_jugador_key] = True
+                                st.rerun()
+                    else:
+                        if st.button("🗑️ Eliminar jugador", key=f"del_{j['id']}"):
+                            st.session_state.confirmar_eliminar_id = j["id"]
+                            st.session_state[_exp_jugador_key] = True
+                            st.rerun()
+
+
+_tab_jugadores_fragment()
 
 # ── Tab 3: ver/editar boleta de cualquier jugador ─────────────────────────
 with tab_boletas:
