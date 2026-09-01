@@ -318,22 +318,22 @@ _CSS_GLOBAL = """
     to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 /* Botón "Cerrar" nativo de Streamlit, reposicionado para que quede pegado
-   arriba a la derecha, por encima del overlay. Se engancha vía el marcador
-   #aviso-cerrar-anchor que se inserta justo antes del st.button en el
-   código: así solo afecta a ESTE botón puntual, no a los demás botones
-   de la página (admin, formularios, etc.). */
-div:has(> #aviso-cerrar-anchor) + div div[data-testid="stButton"] {
-    position: fixed; top: calc(8vh + 14px); right: max(16px, calc(50% - 320px + 14px));
+   arriba a la derecha, por encima del overlay. Se apunta directo por la
+   `key` del botón (Streamlit agrega la clase `st-key-<key>` al contenedor
+   del widget), así que esto afecta SOLO a este botón puntual y no a
+   ningún otro st.button del resto de la página. */
+.st-key-btn_cerrar_aviso {
+    position: fixed !important; top: calc(8vh + 14px); right: max(16px, calc(50% - 306px));
     z-index: 9999;
 }
-div:has(> #aviso-cerrar-anchor) + div div[data-testid="stButton"] button {
+.st-key-btn_cerrar_aviso button {
     width: 34px; height: 34px; border-radius: 50%; padding: 0;
-    background: rgba(20,10,10,0.55); border: 1px solid rgba(255,120,120,0.5);
+    background: rgba(20,10,10,0.75); border: 1px solid rgba(255,120,120,0.6);
     color: #FF8A8A; font-weight: 700; line-height: 1;
     display: flex; align-items: center; justify-content: center;
 }
-div:has(> #aviso-cerrar-anchor) + div div[data-testid="stButton"] button:hover {
-    background: rgba(255,80,80,0.22); border-color: #FF6B6B; color: #fff;
+.st-key-btn_cerrar_aviso button:hover {
+    background: rgba(255,80,80,0.28); border-color: #FF6B6B; color: #fff;
 }
 
 
@@ -643,11 +643,9 @@ if AVISOS_IMPORTANTES and not st.session_state.aviso_cerrado:
         '</div>',
         unsafe_allow_html=True,
     )
-    # Marcador invisible: el CSS de arriba (#aviso-cerrar-anchor) usa este
-    # div para encontrar y reposicionar SOLO el botón que sigue a
-    # continuación (el de cerrar el aviso), sin afectar a ningún otro
-    # st.button del resto de la página.
-    st.markdown('<div id="aviso-cerrar-anchor"></div>', unsafe_allow_html=True)
+    # El botón de abajo se reposiciona por CSS usando su propia `key`
+    # (ver `.st-key-btn_cerrar_aviso` más arriba), para que quede pegado
+    # arriba a la derecha del pop-up, por encima del blur.
     if st.button("✕", key="btn_cerrar_aviso", help="Cerrar aviso"):
         st.session_state.aviso_cerrado = True
         st.rerun()
