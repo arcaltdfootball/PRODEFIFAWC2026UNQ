@@ -12,6 +12,17 @@ _MESES_ES = {
 }
 
 
+def obtener_mes_actual_label():
+    """
+    Devuelve el mes calendario en curso como texto, ej. "Septiembre 2026"
+    (hora Argentina). Se usa tanto acá adentro (`obtener_ranking_mes_actual`)
+    como en la home (`app.py`) para rotular la tarjeta del pozo, así los dos
+    lugares siempre muestran exactamente el mismo mes sin duplicar lógica.
+    """
+    hoy = datetime.now(TZ_ARG).date()
+    return f"{_MESES_ES[hoy.month]} {hoy.year}"
+
+
 def _fetch_all(tabla_query_factory, tamano_pagina=1000):
     """
     Trae TODAS las filas de una consulta a Supabase, paginando con
@@ -145,8 +156,7 @@ def obtener_ranking_mes_actual():
     jugadores = _fetch_all(lambda: sb.table("jugadores").select("id, nombre, pagado, activo"))
     jugadores = [j for j in jugadores if j.get("pagado") and j.get("activo", True)]
 
-    hoy = datetime.now(TZ_ARG).date()
-    mes_actual = f"{_MESES_ES[hoy.month]} {hoy.year}".strip().lower()
+    mes_actual = obtener_mes_actual_label().strip().lower()
 
     mapa_meses = _fetch_all(lambda: sb.table("fecha_mes_map").select("fecha_numero, mes"))
     fechas_del_mes_actual = {
