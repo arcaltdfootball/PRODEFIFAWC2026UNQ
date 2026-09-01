@@ -450,50 +450,7 @@ st.markdown(_CSS_GLOBAL, unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# HERO
-# ══════════════════════════════════════════════════════════════════════════
-st.markdown(
-    '<div class="home-hero">'
-    '<div class="home-kicker">Temporada 2026</div>'
-    '<h1 class="home-title">PRODE FÚTBOL <span>ARGENTINO</span> 2026</h1>'
-    '<p class="home-subtitle">Pronosticá cada fecha, sumá puntos y peleá el pozo '
-    'junto con el resto de los participantes.</p>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    '<div class="home-navhint">'
-    '<span>Desplegá el menú lateral para cargar tu boleta, ver el fixture, '
-    'los resultados y el ranking.</span></div>',
-    unsafe_allow_html=True,
-)
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# AVISOS IMPORTANTES
-# ══════════════════════════════════════════════════════════════════════════
-if AVISOS_IMPORTANTES:
-    avisos_html = "".join(
-        f'<div class="home-aviso-item"><span class="home-aviso-bar"></span><p>{aviso}</p></div>'
-        for aviso in AVISOS_IMPORTANTES
-    )
-    st.markdown(
-        '<div class="home-aviso-wrap">'
-        '<div class="home-aviso-card">'
-        '<div class="home-aviso-head">'
-        '<div class="home-aviso-kicker">Atención participantes</div>'
-        '<div class="home-aviso-title">AVISO IMPORTANTE</div>'
-        '</div>'
-        f'<div class="home-aviso-list">{avisos_html}</div>'
-        '</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# POZO Y GANADORES
+# POZO Y GANADORES — arriba de todo, antes del hero, a pedido
 # ══════════════════════════════════════════════════════════════════════════
 try:
     from database import conectar
@@ -598,6 +555,50 @@ try:
 
 except Exception as e:
     st.warning(f"No se pudo cargar el pozo: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# HERO
+# ══════════════════════════════════════════════════════════════════════════
+st.markdown(
+    '<div class="home-hero">'
+    '<div class="home-kicker">Temporada 2026</div>'
+    '<h1 class="home-title">PRODE FÚTBOL <span>ARGENTINO</span> 2026</h1>'
+    '<p class="home-subtitle">Pronosticá cada fecha, sumá puntos y peleá el pozo '
+    'junto con el resto de los participantes.</p>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    '<div class="home-navhint">'
+    '<span>Desplegá el menú lateral para cargar tu boleta, ver el fixture, '
+    'los resultados y el ranking.</span></div>',
+    unsafe_allow_html=True,
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AVISOS IMPORTANTES
+# ══════════════════════════════════════════════════════════════════════════
+if AVISOS_IMPORTANTES:
+    avisos_html = "".join(
+        f'<div class="home-aviso-item"><span class="home-aviso-bar"></span><p>{aviso}</p></div>'
+        for aviso in AVISOS_IMPORTANTES
+    )
+    st.markdown(
+        '<div class="home-aviso-wrap">'
+        '<div class="home-aviso-card">'
+        '<div class="home-aviso-head">'
+        '<div class="home-aviso-kicker">Atención participantes</div>'
+        '<div class="home-aviso-title">AVISO IMPORTANTE</div>'
+        '</div>'
+        f'<div class="home-aviso-list">{avisos_html}</div>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
 
 
 # ══════════════════════════════════════════════════════════════════════════
