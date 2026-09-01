@@ -489,7 +489,7 @@ if AVISOS_IMPORTANTES:
 # ══════════════════════════════════════════════════════════════════════════
 try:
     from database import conectar
-    from ranking import obtener_ranking
+    from ranking import obtener_ranking_mes_actual
 
     sb = conectar()
     resp_part = sb.table("jugadores").select("id, pagado, activo").execute()
@@ -503,7 +503,10 @@ try:
     total_participantes = len(_jugadores_habilitados)
     pozo = total_participantes * 10_000
 
-    ranking = obtener_ranking()
+    # Se usa el ranking filtrado al MES EN CURSO (no el histórico general):
+    # esta tarjeta muestra al líder "del mes", y no debe seguir mostrando
+    # los puntos ya acumulados del mes anterior apenas arranca uno nuevo.
+    ranking = obtener_ranking_mes_actual()
 
     if ranking:
         max_puntos = ranking[0]["puntos"]
@@ -620,45 +623,16 @@ with st.sidebar:
         st.session_state.mostrar_login_admin = False
 
     if not st.session_state.admin_logueado:
-        # Ícono chiquito y discreto, pegado abajo de todo en el sidebar
-        # (sticky), sin recuadro ni fondo — solo el símbolo. Nadie que no
-        # sepa que existe un panel de admin va a notarlo ni tocarlo.
+        # Ícono chiquito y discreto, sin texto que indique que hay un panel
+        # de admin. Nadie que no sepa que existe va a notarlo ni tocarlo.
         st.markdown(
-            """
-            <style>
-            .st-key-gear_toggle_btn {
-                position: sticky;
-                bottom: 0.4rem;
-                display: flex;
-                justify-content: flex-end;
-                margin-top: 2rem;
-            }
-            .st-key-gear_toggle_btn button {
-                background: transparent !important;
-                border: none !important;
-                box-shadow: none !important;
-                backdrop-filter: none !important;
-                -webkit-backdrop-filter: none !important;
-                padding: 0.1rem 0.35rem !important;
-                min-height: unset !important;
-                color: rgba(255, 255, 255, 0.28) !important;
-                font-size: 1.05rem !important;
-                line-height: 1 !important;
-            }
-            .st-key-gear_toggle_btn button:hover {
-                color: rgba(255, 255, 255, 0.65) !important;
-                background: transparent !important;
-            }
-            .st-key-gear_toggle_btn button:focus:not(:active) {
-                color: rgba(255, 255, 255, 0.65) !important;
-                box-shadow: none !important;
-            }
-            </style>
-            """,
+            "<div style='margin-top: 3rem;'></div>",
             unsafe_allow_html=True,
         )
-        if st.button("⚙", key="gear_toggle_btn"):
-            st.session_state.mostrar_login_admin = not st.session_state.mostrar_login_admin
+        _col_vacia, _col_gear = st.columns([10, 1])
+        with _col_gear:
+            if st.button("⚙", key="gear_toggle_btn"):
+                st.session_state.mostrar_login_admin = not st.session_state.mostrar_login_admin
 
         if st.session_state.mostrar_login_admin:
             _pwd_ingresada = st.text_input(
