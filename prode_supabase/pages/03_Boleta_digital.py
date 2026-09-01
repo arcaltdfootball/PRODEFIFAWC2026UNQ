@@ -42,6 +42,14 @@ gane, la tabla `jugadores` necesita guardar su Alias o CBU. Si no existe,
 correr:
 
     ALTER TABLE jugadores ADD COLUMN alias_cbu text;
+
+También, para que el admin le pueda cargar una foto de perfil a cada
+participante desde la card (en vez del círculo de iniciales), la tabla
+`jugadores` necesita una columna para guardarla. Se guarda como JPEG
+comprimido en base64 (no requiere crear un bucket de Storage aparte). Si
+no existe, correr:
+
+    ALTER TABLE jugadores ADD COLUMN foto_base64 text;
 """
 import base64
 import hashlib
@@ -52,12 +60,14 @@ import string
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import streamlit as st
 import streamlit.components.v1 as components
 import mercadopago
+from PIL import Image  # ya es dependencia de Streamlit, no hace falta instalar nada nuevo
 from database import conectar
 from escudos_map import url_escudo
 
@@ -367,6 +377,49 @@ st.markdown(
     .badge-pts { background:rgba(232,201,107,0.18);color:#e8c96b;   border-radius:10px; padding:3px 10px; font-size:0.72rem; margin-left:6px; }
     .badge-sin { background:rgba(148,163,184,0.15);color:#94a3b8;   border-radius:10px; padding:3px 10px; font-size:0.72rem; }
     .badge-admin { background:rgba(239,68,68,0.15);color:#f87171;   border-radius:10px; padding:2px 10px; font-size:0.72rem; }
+
+    /* ═══════════ CARD DE PARTICIPANTE (panel admin → Jugadores) ═══════════ */
+    .tp-avatar-admin {
+        flex-shrink: 0;
+        width: 72px; height: 72px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-family: 'Bebas Neue', sans-serif; font-size: 1.9rem; color: #0b0f19;
+        background: linear-gradient(135deg, #e8c96b 0%, #c9a54a 100%);
+        background-size: cover; background-position: center;
+        box-shadow: 0 4px 14px rgba(232,201,107,0.35);
+        border: 2px solid rgba(232,201,107,0.4);
+        margin: 0 auto 6px auto;
+    }
+    .tp-rank-box {
+        text-align: center; padding: 10px 8px; border-radius: 14px;
+        background: linear-gradient(135deg, rgba(232,201,107,0.14) 0%, rgba(232,201,107,0.03) 100%);
+        border: 1px solid rgba(232,201,107,0.3);
+    }
+    .tp-rank-num {
+        font-family: 'Bebas Neue', sans-serif; font-size: 2.4rem; line-height: 1;
+        color: #e8c96b; letter-spacing: 1px;
+    }
+    .tp-rank-label {
+        font-family: 'Inter', sans-serif; font-size: 0.68rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8;
+        margin-top: 2px;
+    }
+    .tp-rank-pts {
+        font-family: 'Inter', sans-serif; font-size: 0.78rem; color: #cbd5e1;
+        margin-top: 4px;
+    }
+    .tp-aciertos-wrap {
+        display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;
+    }
+    .tp-acierto-chip {
+        font-family: 'Inter', sans-serif; font-size: 0.72rem; font-weight: 600;
+        border-radius: 8px; padding: 4px 9px;
+        background: rgba(148,163,184,0.12); color: #cbd5e1;
+        border: 1px solid rgba(148,163,184,0.18);
+        white-space: nowrap;
+    }
+    .tp-acierto-chip.tp-buena { background: rgba(74,222,128,0.13); color: #4ade80; border-color: rgba(74,222,128,0.25); }
+    .tp-acierto-chip.tp-mala  { background: rgba(239,68,68,0.12);  color: #f87171; border-color: rgba(239,68,68,0.22); }
 
     /* ═══════════ TARJETA DE PERFIL — usuario + Alias/CBU (glass) ═══════════ */
     .tarjeta-perfil {
@@ -1306,6 +1359,20 @@ def cargar_partidos():
     return sb.table("partidos").select("*").execute().data
 
 
+@st.cache_data(ttl=15)
+def cargar_todos_los_puntos():
+    """
+    Trae jugador_id, partido_id y puntos de TODOS los pronósticos en una sola
+    consulta. Se usa para calcular el ranking y el resumen de aciertos por
+    fecha de cada jugador en su card del panel admin, sin tener que hacer
+    una consulta a Supabase por cada jugador (eso sería lento con muchos
+    participantes). Se invalida junto con el resto de `st.cache_data` cada
+    vez que se cargan/resetean resultados.
+    """
+    res = sb.table("pronosticos").select("jugador_id, partido_id, puntos").execute()
+    return res.data or []
+
+
 def cargar_pronosticos_de(j_id):
     res = (
         sb.table("pronosticos")
@@ -1734,7 +1801,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                                 f"reseteada en la Fecha {fecha}.",
                                                 icon="🔄",
                                             )
-                                            st.rerun()
+                                            st.rerun(scope="fragment")
                                     except Exception as e:
                                         st.error(f"Error al resetear la boleta: {e}")
                                         st.exception(e)
@@ -1745,7 +1812,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                     use_container_width=True,
                                 ):
                                     st.session_state.confirmar_reset_boleta_fecha = None
-                                    st.rerun()
+                                    st.rerun(scope="fragment")
                         else:
                             if st.button(
                                 "🔄🗓️ Resetear boleta de este jugador en esta fecha "
@@ -1758,7 +1825,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                 ),
                             ):
                                 st.session_state.confirmar_reset_boleta_fecha = clave_boleta_fecha
-                                st.rerun()
+                                st.rerun(scope="fragment")
 
                         st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
 
@@ -2069,7 +2136,11 @@ def _tab_resultados_fragment():
                     # se mantenga abierto después de guardar/resetear algo adentro
                     # (por defecto Streamlit lo volvería a cerrar en cada rerun).
                     _exp_fecha_key = f"exp_open_fecha_{clave_fecha}"
-                    with st.expander(f"Fecha {fecha}", expanded=st.session_state.get(_exp_fecha_key, False)):
+                    with st.expander(
+                        f"Fecha {fecha}",
+                        expanded=st.session_state.get(_exp_fecha_key, False),
+                        key=_exp_fecha_key,
+                    ):
                         ids_partidos_fecha = [p["id"] for p in partidos_fecha]
 
                         # ── Resetear la fecha completa (todos sus partidos) ───
@@ -2127,7 +2198,7 @@ def _tab_resultados_fragment():
                                         st.session_state.confirmar_reset_fecha = None
                                         st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Fecha {fecha} reseteada por completo.", icon="🔄")
-                                        st.rerun()
+                                        st.rerun(scope="fragment")
                                     except Exception as e:
                                         st.error(f"Error al resetear la fecha: {e}")
                                         st.exception(e)
@@ -2139,7 +2210,7 @@ def _tab_resultados_fragment():
                                 ):
                                     st.session_state.confirmar_reset_fecha = None
                                     st.session_state[_exp_fecha_key] = True
-                                    st.rerun()
+                                    st.rerun(scope="fragment")
                         else:
                             if st.button(
                                 "🔄🗓️ Resetear TODA la fecha (incluso ya jugada)",
@@ -2151,7 +2222,7 @@ def _tab_resultados_fragment():
                             ):
                                 st.session_state.confirmar_reset_fecha = clave_fecha
                                 st.session_state[_exp_fecha_key] = True
-                                st.rerun()
+                                st.rerun(scope="fragment")
 
                         st.markdown("<hr style='opacity:0.12;'>", unsafe_allow_html=True)
 
@@ -2282,7 +2353,7 @@ def _tab_resultados_fragment():
                                         _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
                                         st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
-                                        st.rerun()
+                                        st.rerun(scope="fragment")
                                     except Exception as e:
                                         st.error(f"Error al guardar: {e}")
                                         st.exception(e)
@@ -2325,7 +2396,7 @@ def _tab_resultados_fragment():
                                         _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
                                         st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Partido {local} vs {visitante} reseteado a no disputado.", icon="🔄")
-                                        st.rerun()
+                                        st.rerun(scope="fragment")
                                     except Exception as e:
                                         st.error(f"Error al resetear: {e}")
                                         st.exception(e)
@@ -2339,6 +2410,7 @@ def _tab_resultados_fragment():
                             with st.expander(
                                 f"🕒 Modificar horario — {local} vs {visitante}",
                                 expanded=st.session_state.get(_exp_horario_key, False),
+                                key=_exp_horario_key,
                             ):
                                 _fecha_actual_h = _parsear_fecha(p.get("fecha_partido")) or datetime.now(TZ_ARG).date()
                                 _hora_actual_h = _parsear_hora(p.get("hora")) or datetime.now(TZ_ARG).time().replace(second=0, microsecond=0)
@@ -2393,7 +2465,7 @@ def _tab_resultados_fragment():
                                                 f"{nueva_hora_h.strftime('%H:%M')}",
                                                 icon="🕒",
                                             )
-                                            st.rerun()
+                                            st.rerun(scope="fragment")
                                         except Exception as e:
                                             st.error(f"Error al actualizar el horario: {e}")
                                             st.exception(e)
@@ -2456,7 +2528,7 @@ def _tab_jugadores_fragment():
         if not st.session_state.confirmar_reset_all:
             if st.button("🗑️ Eliminar TODOS los participantes", type="secondary"):
                 st.session_state.confirmar_reset_all = True
-                st.rerun()
+                st.rerun(scope="fragment")
         else:
             st.error("¿Estás seguro? Esta acción no se puede deshacer.")
             col_si, col_no = st.columns(2)
@@ -2481,14 +2553,14 @@ def _tab_jugadores_fragment():
                         else:
                             st.session_state.confirmar_reset_all = False
                             st.toast("✅ Lista de participantes reseteada.", icon="🗑️")
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     except Exception as e:
                         st.error(f"Error al resetear: {e}")
                         st.exception(e)
             with col_no:
                 if st.button("❌ Cancelar"):
                     st.session_state.confirmar_reset_all = False
-                    st.rerun()
+                    st.rerun(scope="fragment")
 
         st.divider()
 
@@ -2504,7 +2576,7 @@ def _tab_jugadores_fragment():
         if not st.session_state.confirmar_marcar_no_pagado_todos:
             if st.button("💸 Marcar TODOS como NO pagado", type="secondary"):
                 st.session_state.confirmar_marcar_no_pagado_todos = True
-                st.rerun()
+                st.rerun(scope="fragment")
         else:
             st.error(
                 "¿Confirmás marcar a **todos** los jugadores como NO pagada la "
@@ -2529,14 +2601,14 @@ def _tab_jugadores_fragment():
                         else:
                             st.session_state.confirmar_marcar_no_pagado_todos = False
                             st.toast("✅ Todos los jugadores quedaron como NO pagado.", icon="💸")
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     except Exception as e:
                         st.error(f"Error al actualizar los pagos: {e}")
                         st.exception(e)
             with col_mp_no:
                 if st.button("❌ Cancelar", key="cancelar_marcar_no_pagado_todos"):
                     st.session_state.confirmar_marcar_no_pagado_todos = False
-                    st.rerun()
+                    st.rerun(scope="fragment")
 
         st.divider()
 
@@ -2545,23 +2617,79 @@ def _tab_jugadores_fragment():
         # dentro del bloque `if st.session_state.es_admin:` de la página → solo
         # el admin puede ver y usar estos controles.
         st.subheader("👥 Jugadores registrados")
+        _foto_col_disponible = True
         try:
             jugadores_resp = (
                 sb.table("jugadores")
-                .select("id, nombre, username, password_plano, pagado, activo, alias_cbu, mp_payment_id")
+                .select("id, nombre, username, password_plano, pagado, activo, alias_cbu, mp_payment_id, foto_base64")
                 .order("nombre")
                 .execute()
             )
             jugadores = jugadores_resp.data or []
-        except Exception as e:
-            st.error(f"No se pudo listar jugadores: {e}")
-            jugadores = []
+        except Exception:
+            # Fallback si todavía no se corrió el ALTER TABLE de foto_base64
+            # (ver docstring al principio del archivo): no rompe la pestaña,
+            # solo deshabilita la carga de foto hasta que se agregue la columna.
+            _foto_col_disponible = False
+            try:
+                jugadores_resp = (
+                    sb.table("jugadores")
+                    .select("id, nombre, username, password_plano, pagado, activo, alias_cbu, mp_payment_id")
+                    .order("nombre")
+                    .execute()
+                )
+                jugadores = jugadores_resp.data or []
+            except Exception as e:
+                st.error(f"No se pudo listar jugadores: {e}")
+                jugadores = []
+
+        if not _foto_col_disponible:
+            st.info(
+                "📷 Para poder cargarle una foto a cada participante, corré una vez en "
+                "Supabase: `ALTER TABLE jugadores ADD COLUMN foto_base64 text;`"
+            )
 
         if not jugadores:
             st.info("Todavía no hay jugadores registrados.")
         else:
             _n_activos_pagos = sum(1 for j in jugadores if j.get("pagado") and j.get("activo", True))
             st.caption(f"🏆 Participantes habilitados para el pozo: **{_n_activos_pagos}** de {len(jugadores)} registrados")
+
+            # ── Cálculo único (no por jugador) de ranking y aciertos por fecha ──
+            # Todo esto se calcula UNA sola vez acá afuera del loop, en memoria,
+            # a partir de datos ya cargados/cacheados, para que abrir cada card
+            # sea instantáneo (nada de golpear la base de nuevo por jugador).
+            try:
+                _todos_puntos = cargar_todos_los_puntos()
+            except Exception:
+                _todos_puntos = []
+
+            _pron_por_jugador = {}  # jugador_id -> {partido_id: puntos}
+            _puntos_totales = {}    # jugador_id -> puntos acumulados
+            for _row in _todos_puntos:
+                _jid = _row.get("jugador_id")
+                _pid = _row.get("partido_id")
+                _pts = _row.get("puntos")
+                _pron_por_jugador.setdefault(_jid, {})[_pid] = _pts
+                if _pts:
+                    _puntos_totales[_jid] = _puntos_totales.get(_jid, 0) + _pts
+
+            # Ranking: solo cuentan los habilitados para el pozo (pagado y
+            # activo), igual criterio que ya usa el resto de la app.
+            _habilitados = [j for j in jugadores if j.get("pagado") and j.get("activo", True)]
+            _habilitados_ordenados = sorted(
+                _habilitados,
+                key=lambda j: (-_puntos_totales.get(j["id"], 0), j["nombre"]),
+            )
+            _posicion_por_jugador = {j["id"]: i + 1 for i, j in enumerate(_habilitados_ordenados)}
+            _total_habilitados = len(_habilitados_ordenados)
+
+            # Partidos ya jugados, agrupados por Fecha (todas las zonas juntas)
+            _partidos_jugados_por_fecha = {}
+            for _p in partidos_db:
+                if _p.get("goles_local") is not None and _p.get("goles_visitante") is not None:
+                    _partidos_jugados_por_fecha.setdefault(_p["fecha_numero"], []).append(_p["id"])
+            _fechas_con_resultado = sorted(_partidos_jugados_por_fecha.keys(), key=int)
 
             for j in jugadores:
                 _pago_ok = j.get("pagado")
@@ -2579,7 +2707,115 @@ def _tab_jugadores_fragment():
                 with st.expander(
                     f"{_icono_pago} {j['nombre']}  ·  @{j.get('username', '—')}",
                     expanded=st.session_state.get(_exp_jugador_key, False),
+                    key=_exp_jugador_key,
                 ):
+
+                    # ── Foto/avatar + posición en el ranking + aciertos por fecha ──
+                    col_foto, col_rank = st.columns([1, 2])
+
+                    with col_foto:
+                        _foto_actual = (j.get("foto_base64") or "").strip() if _foto_col_disponible else ""
+                        _iniciales_j = "".join(p[0] for p in j["nombre"].split()[:2]).upper() or "?"
+                        if _foto_actual:
+                            st.markdown(
+                                f'<div class="tp-avatar-admin" '
+                                f'style="background-image:url(\'data:image/jpeg;base64,{_foto_actual}\');">'
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                f'<div class="tp-avatar-admin">{_iniciales_j}</div>',
+                                unsafe_allow_html=True,
+                            )
+
+                        if _foto_col_disponible:
+                            # Contador para renovar la key del uploader después de
+                            # guardar: si no, en el próximo rerun seguiría viendo el
+                            # mismo archivo ya subido y lo volvería a guardar en bucle.
+                            _foto_ctr_key = f"foto_up_ctr_{j['id']}"
+                            _foto_ctr = st.session_state.get(_foto_ctr_key, 0)
+                            _foto_nueva = st.file_uploader(
+                                "📷 Cargar foto",
+                                type=["png", "jpg", "jpeg"],
+                                key=f"foto_up_{j['id']}_{_foto_ctr}",
+                                label_visibility="collapsed",
+                            )
+                            if _foto_nueva is not None:
+                                try:
+                                    _img = Image.open(_foto_nueva).convert("RGB")
+                                    _img.thumbnail((320, 320))
+                                    _buf = BytesIO()
+                                    _img.save(_buf, format="JPEG", quality=82)
+                                    _foto_b64_nueva = base64.b64encode(_buf.getvalue()).decode("utf-8")
+                                    sb.table("jugadores").update(
+                                        {"foto_base64": _foto_b64_nueva}
+                                    ).eq("id", j["id"]).execute()
+                                    st.cache_data.clear()
+                                    st.session_state[_foto_ctr_key] = _foto_ctr + 1
+                                    st.toast(f"Foto de {j['nombre']} actualizada.", icon="📷")
+                                    st.session_state[_exp_jugador_key] = True
+                                    st.rerun(scope="fragment")
+                                except Exception as e:
+                                    st.error(f"No se pudo guardar la foto: {e}")
+                            if _foto_actual:
+                                if st.button("🗑️ Quitar foto", key=f"foto_del_{j['id']}", use_container_width=True):
+                                    sb.table("jugadores").update({"foto_base64": None}).eq("id", j["id"]).execute()
+                                    st.cache_data.clear()
+                                    st.session_state[_exp_jugador_key] = True
+                                    st.rerun(scope="fragment")
+
+                    with col_rank:
+                        _pos_j = _posicion_por_jugador.get(j["id"])
+                        _pts_j = _puntos_totales.get(j["id"], 0)
+                        if _pos_j:
+                            st.markdown(
+                                f"""
+                                <div class="tp-rank-box">
+                                    <div class="tp-rank-num">#{_pos_j} <span style="font-size:1.1rem;color:#94a3b8;">/ {_total_habilitados}</span></div>
+                                    <div class="tp-rank-label">Posición actual en el ranking</div>
+                                    <div class="tp-rank-pts">🏅 {_pts_j} puntos acumulados</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                f"""
+                                <div class="tp-rank-box">
+                                    <div class="tp-rank-label" style="font-size:0.82rem;">
+                                        No cuenta para el ranking actual<br>(inscripción no pagada o participación pausada)
+                                    </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
+                    # ── Resumen de aciertos por fecha (mismos datos que cada
+                    # expander "Fecha X" de la boleta, resumidos acá mismo) ──
+                    _pron_j = _pron_por_jugador.get(j["id"], {})
+                    _chips_html = []
+                    for _f in _fechas_con_resultado:
+                        _ids_f = _partidos_jugados_por_fecha[_f]
+                        _total_f = len(_ids_f)
+                        _aciertos_f = sum(
+                            1 for _pid in _ids_f if _pron_j.get(_pid) not in (None, 0)
+                        )
+                        _clase = "tp-buena" if _aciertos_f == _total_f and _total_f > 0 else (
+                            "tp-mala" if _aciertos_f == 0 else ""
+                        )
+                        _chips_html.append(
+                            f'<span class="tp-acierto-chip {_clase}">F{_f}: {_aciertos_f}/{_total_f}</span>'
+                        )
+                    if _chips_html:
+                        st.markdown(
+                            f'<div class="tp-aciertos-wrap">{"".join(_chips_html)}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.caption("✅ Aciertos por fecha: todavía no hay resultados cargados.")
+
+                    st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
 
                     # ── Estado de pago (marcar manual, ej. pagó en efectivo) ──
                     if _pago_ok:
@@ -2589,7 +2825,7 @@ def _tab_jugadores_fragment():
                         if st.button("↩️ Marcar como NO pagada", key=f"despagar_{j['id']}"):
                             sb.table("jugadores").update({"pagado": False}).eq("id", j["id"]).execute()
                             st.session_state[_exp_jugador_key] = True
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     else:
                         st.error("💰 Inscripción NO pagada")
 
@@ -2614,7 +2850,7 @@ def _tab_jugadores_fragment():
                                         f"{j['nombre']}. Se marcó como pagada."
                                     )
                                     st.session_state[_exp_jugador_key] = True
-                                    st.rerun()
+                                    st.rerun(scope="fragment")
                                 else:
                                     st.warning(
                                         "No encontramos ningún pago aprobado con este "
@@ -2627,7 +2863,7 @@ def _tab_jugadores_fragment():
                         if st.button("✅ Marcar como pagada (manual)", key=f"pagar_{j['id']}"):
                             sb.table("jugadores").update({"pagado": True}).eq("id", j["id"]).execute()
                             st.session_state[_exp_jugador_key] = True
-                            st.rerun()
+                            st.rerun(scope="fragment")
 
                     # ── Alias/CBU para transferir el premio si gana ───────────
                     st.caption("💸 Alias / CBU para transferir el premio")
@@ -2647,7 +2883,7 @@ def _tab_jugadores_fragment():
                             ).eq("id", j["id"]).execute()
                             st.toast(f"Alias/CBU de {j['nombre']} actualizado.", icon="💾")
                             st.session_state[_exp_jugador_key] = True
-                            st.rerun()
+                            st.rerun(scope="fragment")
 
                     # ── Ocultar/pausar manualmente (sin eliminar) ─────────────
                     # Útil si una fecha el jugador decide no participar: lo saca
@@ -2658,13 +2894,13 @@ def _tab_jugadores_fragment():
                         if st.button("⏸️ Ocultar / pausar participante", key=f"pausar_{j['id']}"):
                             sb.table("jugadores").update({"activo": False}).eq("id", j["id"]).execute()
                             st.session_state[_exp_jugador_key] = True
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     else:
                         st.warning("⏸️ Oculto / pausado (no cuenta para el pozo, no puede jugar)")
                         if st.button("▶️ Reactivar participante", key=f"reactivar_{j['id']}"):
                             sb.table("jugadores").update({"activo": True}).eq("id", j["id"]).execute()
                             st.session_state[_exp_jugador_key] = True
-                            st.rerun()
+                            st.rerun(scope="fragment")
 
                     st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
 
@@ -2697,7 +2933,7 @@ def _tab_jugadores_fragment():
                                         st.cache_data.clear()
                                         st.toast("Datos actualizados.", icon="✅")
                                         st.session_state[_exp_jugador_key] = True
-                                        st.rerun()
+                                        st.rerun(scope="fragment")
                                 except Exception as e:
                                     st.error(f"Error al actualizar: {e}")
                                     st.exception(e)
@@ -2731,7 +2967,7 @@ def _tab_jugadores_fragment():
                                 }).eq("id", j["id"]).execute()
                                 st.toast(f"Contraseña de {j['nombre']} actualizada.", icon="🔑")
                                 st.session_state[_exp_jugador_key] = True
-                                st.rerun()
+                                st.rerun(scope="fragment")
 
                     # ── Resetear contraseña (autogenerada) ────────────────────
                     if st.button("🎲 Generar contraseña aleatoria", key=f"reset_{j['id']}"):
@@ -2742,7 +2978,7 @@ def _tab_jugadores_fragment():
                         }).eq("id", j["id"]).execute()
                         st.success(f"Nueva contraseña para **{j['nombre']}**: `{nueva_pwd}`")
                         st.session_state[_exp_jugador_key] = True
-                        st.rerun()
+                        st.rerun(scope="fragment")
 
                     st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
 
@@ -2774,7 +3010,7 @@ def _tab_jugadores_fragment():
                                         st.session_state.confirmar_eliminar_id = None
                                         st.toast(f"Jugador {j['nombre']} eliminado.", icon="🗑️")
                                         st.session_state[_exp_jugador_key] = True
-                                        st.rerun()
+                                        st.rerun(scope="fragment")
                                 except Exception as e:
                                     st.error(f"Error al eliminar: {e}")
                                     st.exception(e)
@@ -2782,12 +3018,12 @@ def _tab_jugadores_fragment():
                             if st.button("❌ No", key=f"del_no_{j['id']}", use_container_width=True):
                                 st.session_state.confirmar_eliminar_id = None
                                 st.session_state[_exp_jugador_key] = True
-                                st.rerun()
+                                st.rerun(scope="fragment")
                     else:
                         if st.button("🗑️ Eliminar jugador", key=f"del_{j['id']}"):
                             st.session_state.confirmar_eliminar_id = j["id"]
                             st.session_state[_exp_jugador_key] = True
-                            st.rerun()
+                            st.rerun(scope="fragment")
 
 
 _tab_jugadores_fragment()
