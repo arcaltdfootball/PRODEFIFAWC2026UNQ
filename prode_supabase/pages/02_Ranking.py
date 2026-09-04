@@ -3,6 +3,7 @@ import pandas as pd
 import base64
 import math
 from pathlib import Path
+from datetime import datetime
 from ranking import obtener_ranking, _fetch_all
 from database import conectar
 
@@ -229,10 +230,24 @@ _ids_habilitados = {
 }
 
 
+_MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def _nombre_mes_actual():
+    """Devuelve el nombre del mes actual con el mismo formato que se usa
+    en `fecha_mes_map.mes` (ej: 'Septiembre 2026')."""
+    hoy = datetime.now()
+    return f"{_MESES_ES[hoy.month - 1].capitalize()} {hoy.year}"
+
+
 # ── Ranking mensual: agrupa por Fecha→Mes asignado desde el admin ──────────
 def obtener_meses_disponibles():
-    """Devuelve los meses configurados, ordenados cronológicamente según la
-    fecha (jornada) más chica que tengan asignada."""
+    """Devuelve los meses configurados, ordenados del más reciente al más
+    antiguo (según la fecha/jornada más chica que tengan asignada), con el
+    mes actual siempre primero si está entre los configurados."""
     try:
         filas = sb.table("fecha_mes_map").select("fecha_numero, mes").execute().data or []
     except Exception:
@@ -240,7 +255,15 @@ def obtener_meses_disponibles():
     orden = {}
     for r in filas:
         orden.setdefault(r["mes"], []).append(r["fecha_numero"])
-    return sorted(orden.keys(), key=lambda m: min(orden[m]))
+
+    meses_ordenados = sorted(orden.keys(), key=lambda m: min(orden[m]), reverse=True)
+
+    mes_actual = _nombre_mes_actual()
+    if mes_actual in meses_ordenados:
+        meses_ordenados.remove(mes_actual)
+        meses_ordenados.insert(0, mes_actual)
+
+    return meses_ordenados
 
 
 def obtener_ranking_mensual(mes, ids_habilitados):
@@ -332,6 +355,9 @@ def build_df(ranking_data, session_key):
     nuevas_posiciones = {}
     datos = []
 
+    rank_actual = 0
+    puntos_previos = None
+
     for i, row in enumerate(ranking_data):
         nombre     = row["nombre"]
         puntos     = row.get("puntos") or 0
@@ -339,7 +365,13 @@ def build_df(ranking_data, session_key):
         disputados = row.get("disputados") or 0
         exactos    = row.get("aciertos_exactos") or 0
 
-        pos_actual = i + 1
+        # Ranking "denso": los participantes empatados en puntos comparten la
+        # misma posición, y la siguiente posición distinta es la inmediata
+        # siguiente (ej: dos 1ros -> el próximo grupo es 2do, no 3ro).
+        if i == 0 or puntos != puntos_previos:
+            rank_actual += 1
+        puntos_previos = puntos
+        pos_actual = rank_actual
         nuevas_posiciones[nombre] = pos_actual
         prev_pos = posiciones_anteriores.get(nombre, pos_actual)
 
@@ -467,11 +499,12 @@ def render_ranking(df_full, busqueda, session_key):
 # ── Preparar DataFrame ────────────────────────────────────────────────────────
 df_general = build_df(ranking, "pos_ant_general")
 
-# ── Tabs: General + un tab por mes configurado ──────────────────────────────
-_nombres_tabs = ["🏆 General"] + [f"🗓️ {m}" for m in _meses_disponibles]
+# ── Tabs: un tab por mes configurado (mes actual primero) + General al final ──
+_nombres_tabs = [f"🗓️ {m}" for m in _meses_disponibles] + ["🏆 General"]
 _tabs = st.tabs(_nombres_tabs)
+_tab_general = _tabs[-1]
 
-with _tabs[0]:
+with _tab_general:
     busqueda = st.text_input("🔍  Buscar participante", placeholder="Nombre...", key="busq_general")
 
     if TIENE_EXCEL:
@@ -491,7 +524,7 @@ with _tabs[0]:
 
     render_ranking(df_general, busqueda, "pos_ant_general")
 
-for _tab, _mes in zip(_tabs[1:], _meses_disponibles):
+for _tab, _mes in zip(_tabs[:-1], _meses_disponibles):
     with _tab:
         _ranking_mes = obtener_ranking_mensual(_mes, _ids_habilitados)
         if not _ranking_mes:
