@@ -2317,18 +2317,31 @@ def _tab_resultados_fragment():
 
                                         prons = (
                                             sb.table("pronosticos")
-                                            .select("id, signo_pred, goles_local_pred, goles_visitante_pred, sin_marcador")
+                                            .select("id, jugador_id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, sin_marcador")
                                             .eq("partido_id", p["id"])
                                             .execute()
                                             .data or []
                                         )
+
+                                        # Filtramos cualquier fila "fantasma"/corrupta (sin
+                                        # jugador_id, partido_id o signo_pred) ANTES de calcular
+                                        # puntos: una fila así no es una boleta real de nadie y
+                                        # no debe recibir puntaje ni bloquear el cálculo de los
+                                        # jugadores que sí pronosticaron bien.
+                                        prons_validos, prons_corruptos = [], []
+                                        for _pr in prons:
+                                            if _pr.get("jugador_id") and _pr.get("partido_id") and _pr.get("signo_pred") is not None:
+                                                prons_validos.append(_pr)
+                                            else:
+                                                prons_corruptos.append(_pr)
+
                                         # Antes esto hacía un UPDATE por cada pronóstico (uno
                                         # por jugador, uno por uno contra la base = lento con
                                         # muchos jugadores). Ahora se calculan todos los puntos
                                         # en memoria y se mandan en un solo pedido (upsert por
                                         # id), sin cambiar el resultado del cálculo.
                                         puntos_a_guardar = []
-                                        for pr in prons:
+                                        for pr in prons_validos:
                                             gl_pr = pr.get("goles_local_pred")
                                             gv_pr = pr.get("goles_visitante_pred")
                                             sin_marc_pr = bool(pr.get("sin_marcador"))
@@ -2343,10 +2356,61 @@ def _tab_resultados_fragment():
                                                 pts = 1
                                             else:
                                                 pts = 0
-                                            puntos_a_guardar.append({"id": pr["id"], "puntos": pts})
+                                            # IMPORTANTE: mandamos la fila COMPLETA, no solo
+                                            # {"id", "puntos"}. Antes, si por lo que sea Postgrest
+                                            # no reconocía el conflicto por "id" (típico si no se
+                                            # pasa on_conflict explícito), terminaba haciendo un
+                                            # INSERT nuevo en vez de un UPDATE — y ese INSERT
+                                            # fallaba con "null value in column jugador_id"
+                                            # porque solo veníamos mandando id y puntos. Con la
+                                            # fila completa, aunque termine siendo un INSERT, no
+                                            # le faltan columnas NOT NULL y no puede romper.
+                                            puntos_a_guardar.append({
+                                                "id": pr["id"],
+                                                "jugador_id": pr["jugador_id"],
+                                                "partido_id": pr["partido_id"],
+                                                "signo_pred": pr["signo_pred"],
+                                                "goles_local_pred": gl_pr,
+                                                "goles_visitante_pred": gv_pr,
+                                                "sin_marcador": sin_marc_pr,
+                                                "puntos": pts,
+                                            })
 
+                                        _error_puntos_lote = None
                                         if puntos_a_guardar:
-                                            sb.table("pronosticos").upsert(puntos_a_guardar).execute()
+                                            try:
+                                                sb.table("pronosticos").upsert(
+                                                    puntos_a_guardar, on_conflict="id"
+                                                ).execute()
+                                            except Exception as _e_pts:
+                                                # Red de seguridad: si el upsert en lote igual
+                                                # falla (por ejemplo por otra fila corrupta que
+                                                # no detectamos), actualizamos de a uno para no
+                                                # dejar a TODOS los jugadores sin sus puntos
+                                                # calculados por culpa de una sola fila rota.
+                                                _error_puntos_lote = _e_pts
+                                                for _fila in puntos_a_guardar:
+                                                    try:
+                                                        sb.table("pronosticos").update(
+                                                            {"puntos": _fila["puntos"]}
+                                                        ).eq("id", _fila["id"]).execute()
+                                                    except Exception:
+                                                        pass
+
+                                        if prons_corruptos:
+                                            _ids_corruptos = ", ".join(str(_pr.get("id")) for _pr in prons_corruptos)
+                                            st.warning(
+                                                f"⚠️ {len(prons_corruptos)} pronóstico(s) de este partido "
+                                                f"no tienen jugador_id/partido_id/signo_pred válidos "
+                                                f"(id: {_ids_corruptos}). No se les calculó puntaje "
+                                                "(no son boletas reales de nadie). Convendría revisarlos "
+                                                "y borrarlos a mano en Supabase si son basura."
+                                            )
+                                        if _error_puntos_lote is not None:
+                                            st.warning(
+                                                "⚠️ El guardado de puntos en lote falló y se guardó "
+                                                f"de a uno como respaldo. Error original: {_error_puntos_lote}"
+                                            )
 
                                         cargar_partidos.clear()
                                         st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
