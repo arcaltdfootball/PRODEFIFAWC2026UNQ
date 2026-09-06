@@ -1402,6 +1402,29 @@ def _invalidar_cache_pron(j_id=None):
                 del st.session_state[k]
 
 
+def _invalidar_cache_resultados(incluir_puntos: bool = True):
+    """
+    Invalida SOLO lo que realmente cambia al cargar/resetear un resultado o
+    editar el horario de un partido: la lista de partidos (`cargar_partidos`)
+    y, si corresponde, el resumen de puntos (`cargar_todos_los_puntos` +
+    el caché de boletas por jugador en session_state).
+
+    Antes de esto, cada una de estas acciones llamaba a `st.cache_data.clear()`
+    a secas — eso no limpia solo lo de esta página: borra de un saque el
+    caché de TODA la app (ranking, dashboard, escudos, etc.), obligando a que
+    la próxima vez que cualquier página pida cualquier dato tenga que
+    recalcularlo/refetchearlo de cero, de forma sincrónica. Con muchos
+    partidos y jugadores eso es justamente lo que se sentía como "se cuelga,
+    piensa y piensa". Invalidando puntual, el resto de la app sigue sirviendo
+    desde su propio caché y se refresca solo, dentro de su propio `ttl`
+    (30s para partidos, 15s para puntos) — no hace falta forzarlo desde acá.
+    """
+    cargar_partidos.clear()
+    if incluir_puntos:
+        cargar_todos_los_puntos.clear()
+        _invalidar_cache_pron()
+
+
 def agrupar_por_zona_fecha(partidos):
     por_zona = {}
     for p in partidos:
@@ -2160,6 +2183,7 @@ def _tab_resultados_fragment():
                                     key=f"reset_fecha_si_{clave_fecha}",
                                     use_container_width=True,
                                 ):
+                                  with st.spinner(f"Reseteando toda la Fecha {fecha}…"):
                                     try:
                                         sb.table("partidos").update({
                                             "goles_local":     None,
@@ -2192,9 +2216,7 @@ def _tab_resultados_fragment():
                                             "partido_id", ids_partidos_fecha
                                         ).execute()
 
-                                        cargar_partidos.clear()
-                                        st.cache_data.clear()
-                                        _invalidar_cache_pron()  # cambió "puntos" de todos los jugadores
+                                        _invalidar_cache_resultados()  # incluye puntos: cambiaron todos los de esta fecha
                                         st.session_state.confirmar_reset_fecha = None
                                         st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Fecha {fecha} reseteada por completo.", icon="🔄")
@@ -2259,6 +2281,7 @@ def _tab_resultados_fragment():
                             with c3:
                                 st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
                                 if st.button("💾 Guardar", key=f"admin_save_{p['id']}", use_container_width=True):
+                                  with st.spinner("Guardando resultado y recalculando puntos…"):
                                     try:
                                         resp_update = (
                                             sb.table("partidos")
@@ -2272,43 +2295,40 @@ def _tab_resultados_fragment():
 
                                         filas_afectadas = resp_update.data or []
 
-                                        # Verificación real: traer el registro fresco (sin caché)
-                                        # y comparar, porque .data puede venir vacío aunque el
-                                        # UPDATE sí se haya aplicado en la base (gotcha conocido
-                                        # de supabase-py con el header Prefer/representation).
-                                        verificacion = (
-                                            sb.table("partidos")
-                                            .select("id, goles_local, goles_visitante")
-                                            .eq("id", p["id"])
-                                            .execute()
-                                            .data
-                                        )
-                                        fila_real = verificacion[0] if verificacion else None
-                                        realmente_actualizado = (
-                                            fila_real is not None
-                                            and fila_real.get("goles_local") == int(gl_new)
-                                            and fila_real.get("goles_visitante") == int(gv_new)
-                                        )
-
-                                        if not filas_afectadas and not realmente_actualizado:
-                                            st.error(
-                                                "⚠️ Verifiqué con un SELECT fresco después del UPDATE y el "
-                                                "valor en la base sigue siendo el viejo. El UPDATE NO se "
-                                                "aplicó de verdad (no es solo un tema de respuesta vacía).\n\n"
-                                                f"Fila encontrada en la base: `{fila_real}`\n\n"
-                                                "Con service_role esto descarta RLS. Revisar: "
-                                                "¿el 'id' que usa esta fila realmente existe en la tabla? "
-                                                "¿hay un trigger en 'partidos' que revierte el cambio? "
-                                                "¿la app está apuntando a otro proyecto/URL de Supabase "
-                                                "distinto al que estás mirando en el dashboard?"
+                                        # Verificación real con SELECT fresco — SOLO cuando hace
+                                        # falta. `.data` puede venir vacío aunque el UPDATE sí se
+                                        # haya aplicado (gotcha conocido de supabase-py con el
+                                        # header Prefer/representation), pero en el caso normal
+                                        # (`filas_afectadas` no vacío) el UPDATE ya confirmó el
+                                        # cambio solo y este SELECT extra era un round-trip de red
+                                        # de más en TODOS los guardados, no solo en el caso raro.
+                                        if not filas_afectadas:
+                                            verificacion = (
+                                                sb.table("partidos")
+                                                .select("id, goles_local, goles_visitante")
+                                                .eq("id", p["id"])
+                                                .execute()
+                                                .data
                                             )
-                                            st.stop()
-                                        elif not filas_afectadas and realmente_actualizado:
-                                            st.info(
-                                                "ℹ️ El UPDATE sí se aplicó en la base (confirmado con SELECT "
-                                                "fresco), solo que la respuesta de Supabase no traía las filas "
-                                                "en `.data`. Sigo con el guardado normalmente."
+                                            fila_real = verificacion[0] if verificacion else None
+                                            realmente_actualizado = (
+                                                fila_real is not None
+                                                and fila_real.get("goles_local") == int(gl_new)
+                                                and fila_real.get("goles_visitante") == int(gv_new)
                                             )
+                                            if not realmente_actualizado:
+                                                st.error(
+                                                    "⚠️ Verifiqué con un SELECT fresco después del UPDATE y el "
+                                                    "valor en la base sigue siendo el viejo. El UPDATE NO se "
+                                                    "aplicó de verdad (no es solo un tema de respuesta vacía).\n\n"
+                                                    f"Fila encontrada en la base: `{fila_real}`\n\n"
+                                                    "Con service_role esto descarta RLS. Revisar: "
+                                                    "¿el 'id' que usa esta fila realmente existe en la tabla? "
+                                                    "¿hay un trigger en 'partidos' que revierte el cambio? "
+                                                    "¿la app está apuntando a otro proyecto/URL de Supabase "
+                                                    "distinto al que estás mirando en el dashboard?"
+                                                )
+                                                st.stop()
 
                                         # Recalcular puntos de pronósticos de este partido
                                         if gl_new > gv_new:   signo_r = "1"
@@ -2412,9 +2432,7 @@ def _tab_resultados_fragment():
                                                 f"de a uno como respaldo. Error original: {_error_puntos_lote}"
                                             )
 
-                                        cargar_partidos.clear()
-                                        st.cache_data.clear()  # limpia también la cache de 01_Resultados.py (funciones cacheadas distintas por módulo)
-                                        _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
+                                        _invalidar_cache_resultados()  # incluye puntos: cambió el puntaje de este partido
                                         st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Resultado guardado: {gl_new}-{gv_new} ({signo_r})", icon="✅")
                                         st.rerun(scope="fragment")
@@ -2429,35 +2447,42 @@ def _tab_resultados_fragment():
                                     use_container_width=True,
                                     help="Vuelve el partido a 'no disputado': borra el resultado y los puntos ya asignados (funciona aunque ya se haya jugado).",
                                 ):
+                                  with st.spinner("Reseteando partido…"):
                                     try:
-                                        sb.table("partidos").update({
-                                            "goles_local":     None,
-                                            "goles_visitante": None,
-                                        }).eq("id", p["id"]).execute()
-
-                                        # Verificación real con SELECT fresco
-                                        verif_reset = (
+                                        resp_reset = (
                                             sb.table("partidos")
-                                            .select("id, goles_local, goles_visitante")
+                                            .update({
+                                                "goles_local":     None,
+                                                "goles_visitante": None,
+                                            })
                                             .eq("id", p["id"])
                                             .execute()
-                                            .data
                                         )
-                                        fila_reset = verif_reset[0] if verif_reset else None
-                                        if not fila_reset or fila_reset.get("goles_local") is not None or fila_reset.get("goles_visitante") is not None:
-                                            st.error(
-                                                "⚠️ Se intentó resetear el partido pero el valor en la base "
-                                                f"sigue siendo el viejo: `{fila_reset}`. Revisar RLS/triggers."
+
+                                        # Verificación real con SELECT fresco — solo si el UPDATE
+                                        # no vino con filas (mismo criterio que en "Guardar", ver
+                                        # el comentario ahí para el detalle del gotcha).
+                                        if not (resp_reset.data or []):
+                                            verif_reset = (
+                                                sb.table("partidos")
+                                                .select("id, goles_local, goles_visitante")
+                                                .eq("id", p["id"])
+                                                .execute()
+                                                .data
                                             )
-                                            st.stop()
+                                            fila_reset = verif_reset[0] if verif_reset else None
+                                            if not fila_reset or fila_reset.get("goles_local") is not None or fila_reset.get("goles_visitante") is not None:
+                                                st.error(
+                                                    "⚠️ Se intentó resetear el partido pero el valor en la base "
+                                                    f"sigue siendo el viejo: `{fila_reset}`. Revisar RLS/triggers."
+                                                )
+                                                st.stop()
 
                                         # Borrar puntos ya asignados de los pronósticos de este partido
                                         # (vuelven a quedar "pendientes", como si el partido no se hubiera jugado)
                                         sb.table("pronosticos").update({"puntos": None}).eq("partido_id", p["id"]).execute()
 
-                                        cargar_partidos.clear()
-                                        st.cache_data.clear()
-                                        _invalidar_cache_pron()  # cambió "puntos" de los jugadores de este partido
+                                        _invalidar_cache_resultados()  # incluye puntos: se borraron los de este partido
                                         st.session_state[_exp_fecha_key] = True
                                         st.toast(f"Partido {local} vs {visitante} reseteado a no disputado.", icon="🔄")
                                         st.rerun(scope="fragment")
@@ -2498,30 +2523,37 @@ def _tab_resultados_fragment():
                                         key=f"admin_save_horario_{p['id']}",
                                         use_container_width=True,
                                     ):
+                                      with st.spinner("Guardando horario…"):
                                         try:
-                                            sb.table("partidos").update({
-                                                "fecha_partido": nueva_fecha_h.strftime("%Y-%m-%d"),
-                                                "hora":          nueva_hora_h.strftime("%H:%M"),
-                                            }).eq("id", p["id"]).execute()
-
-                                            # Verificación real con SELECT fresco
-                                            verif_hor = (
+                                            resp_hor = (
                                                 sb.table("partidos")
-                                                .select("id, fecha_partido, hora")
+                                                .update({
+                                                    "fecha_partido": nueva_fecha_h.strftime("%Y-%m-%d"),
+                                                    "hora":          nueva_hora_h.strftime("%H:%M"),
+                                                })
                                                 .eq("id", p["id"])
                                                 .execute()
-                                                .data
                                             )
-                                            fila_hor = verif_hor[0] if verif_hor else None
-                                            if not fila_hor or _parsear_fecha(fila_hor.get("fecha_partido")) != nueva_fecha_h or _parsear_hora(fila_hor.get("hora")) != nueva_hora_h:
-                                                st.error(
-                                                    "⚠️ Se ejecutó el guardado pero el horario en la "
-                                                    f"base sigue distinto: `{fila_hor}`. Revisar RLS/triggers."
-                                                )
-                                                st.stop()
 
-                                            cargar_partidos.clear()
-                                            st.cache_data.clear()
+                                            # Verificación real con SELECT fresco — solo si el
+                                            # UPDATE no vino con filas (ver comentario en "Guardar").
+                                            if not (resp_hor.data or []):
+                                                verif_hor = (
+                                                    sb.table("partidos")
+                                                    .select("id, fecha_partido, hora")
+                                                    .eq("id", p["id"])
+                                                    .execute()
+                                                    .data
+                                                )
+                                                fila_hor = verif_hor[0] if verif_hor else None
+                                                if not fila_hor or _parsear_fecha(fila_hor.get("fecha_partido")) != nueva_fecha_h or _parsear_hora(fila_hor.get("hora")) != nueva_hora_h:
+                                                    st.error(
+                                                        "⚠️ Se ejecutó el guardado pero el horario en la "
+                                                        f"base sigue distinto: `{fila_hor}`. Revisar RLS/triggers."
+                                                    )
+                                                    st.stop()
+
+                                            _invalidar_cache_resultados(incluir_puntos=False)  # el horario no afecta puntos
                                             st.session_state[_exp_fecha_key] = True
                                             st.session_state[_exp_horario_key] = True
                                             st.toast(
