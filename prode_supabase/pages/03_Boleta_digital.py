@@ -50,6 +50,19 @@ comprimido en base64 (no requiere crear un bucket de Storage aparte). Si
 no existe, correr:
 
     ALTER TABLE jugadores ADD COLUMN foto_base64 text;
+
+También, para que el admin pueda habilitar/deshabilitar con un botón que
+los jugadores vean e interactúen con la boleta (cuando está deshabilitada,
+a los jugadores se les oculta el juego por completo), hace falta una
+tabla chica de configuración de la app. Si no existe, correr:
+
+    CREATE TABLE IF NOT EXISTS configuracion_app (
+        id integer PRIMARY KEY DEFAULT 1,
+        boleta_habilitada boolean NOT NULL DEFAULT true
+    );
+    INSERT INTO configuracion_app (id, boleta_habilitada)
+    VALUES (1, true)
+    ON CONFLICT (id) DO NOTHING;
 """
 import base64
 import hashlib
@@ -364,6 +377,14 @@ st.markdown(
     }
     .fila-equipo.derecha { justify-content: flex-end; text-align: right; }
     .fila-escudo { width: 40px; height: 40px; object-fit: contain; }
+    .forma-dots {
+        display: inline-flex; align-items: center; gap: 3px;
+        flex-shrink: 0;
+    }
+    .forma-punto {
+        width: 7px; height: 7px; border-radius: 50%;
+        display: inline-block; box-shadow: 0 0 0 1px rgba(0,0,0,0.25);
+    }
     .fila-meta {
         font-size: 0.7rem; color: #64748b; text-align: center;
         margin-bottom: 2px; font-family: 'Inter', sans-serif;
@@ -579,6 +600,34 @@ def _hash_pwd(pwd: str) -> str:
 def _generar_password(largo: int = 8) -> str:
     chars = string.ascii_letters + string.digits
     return "".join(secrets.choice(chars) for _ in range(largo))
+
+
+@st.cache_data(ttl=10)
+def _cargar_config_app():
+    """
+    Trae la config global de la app (fila única, id=1) desde la tabla
+    `configuracion_app`. Si la tabla todavía no existe (instalación vieja
+    que no corrió el CREATE TABLE de más arriba) o la fila no está, no
+    rompemos la página: devolvemos el default (boleta habilitada) para
+    no bloquear a nadie por un problema de configuración.
+    """
+    try:
+        res = sb.table("configuracion_app").select("*").eq("id", 1).execute()
+        if res.data:
+            return res.data[0]
+    except Exception:
+        pass
+    return {"id": 1, "boleta_habilitada": True}
+
+
+def _set_boleta_habilitada(valor: bool):
+    """Prende/apaga, desde el admin, si los jugadores pueden ver e
+    interactuar con la boleta (el juego). Hace upsert por si la fila
+    id=1 todavía no existe."""
+    sb.table("configuracion_app").upsert(
+        {"id": 1, "boleta_habilitada": valor}
+    ).execute()
+    _cargar_config_app.clear()
 
 
 TZ_ARG = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -944,6 +993,34 @@ with st.sidebar:
             st.caption(f"⚠️ Supabase key activa: `{_rol_key}` (…{_tail_key}) — NO es service_role")
         else:
             st.caption("⚠️ No se pudo leer/decodificar SUPABASE_KEY")
+
+        st.markdown("---")
+        _config_app = _cargar_config_app()
+        _boleta_on = bool(_config_app.get("boleta_habilitada", True))
+        if _boleta_on:
+            st.success("👁️ Boleta visible para los jugadores")
+            if st.button(
+                "🙈 Ocultar boleta a los jugadores",
+                use_container_width=True,
+                help=(
+                    "Los jugadores dejan de ver e interactuar con el juego "
+                    "(la boleta se les oculta por completo). Vos como admin "
+                    "seguís viendo todo igual."
+                ),
+            ):
+                _set_boleta_habilitada(False)
+                st.rerun()
+        else:
+            st.warning("🙈 Boleta OCULTA para los jugadores")
+            if st.button(
+                "👁️ Mostrar boleta a los jugadores",
+                use_container_width=True,
+                help="Los jugadores vuelven a ver e interactuar con el juego normalmente.",
+            ):
+                _set_boleta_habilitada(True)
+                st.rerun()
+        st.markdown("---")
+
         if st.button("Cerrar sesión", use_container_width=True):
             _cerrar_sesion()
 
@@ -1439,6 +1516,57 @@ def etiqueta_zona(z):
     return "Interzonal" if z == "Interzonal" else f"Zona {z}"
 
 
+_COLOR_FORMA = {"V": "#22c55e", "E": "#9ca3af", "D": "#ef4444"}  # verde / gris / rojo
+
+
+def calcular_forma_reciente(partidos):
+    """
+    Para cada equipo, calcula el resultado (V/E/D) de sus últimos 5
+    partidos YA JUGADOS (con goles cargados), ordenados del más reciente
+    al más antiguo. Se usa para pintar los puntitos de racha al lado de
+    cada escudo en la boleta, así el jugador tiene una idea rápida de
+    cómo viene cada equipo últimamente.
+    """
+    jugados = [
+        p for p in partidos
+        if p.get("goles_local") is not None and p.get("goles_visitante") is not None
+    ]
+    jugados_ordenados = sorted(
+        jugados, key=lambda p: (p.get("fecha_partido") or "", p.get("hora") or "")
+    )
+
+    forma = {}
+    for p in jugados_ordenados:
+        gl, gv = p["goles_local"], p["goles_visitante"]
+        local, visitante = p["equipo_local"], p["equipo_visitante"]
+        if gl > gv:
+            res_local, res_visit = "V", "D"
+        elif gl < gv:
+            res_local, res_visit = "D", "V"
+        else:
+            res_local, res_visit = "E", "E"
+        forma.setdefault(local, []).append(res_local)
+        forma.setdefault(visitante, []).append(res_visit)
+
+    # Nos quedamos con los últimos 5 de cada equipo, del más reciente al
+    # más antiguo (los agregamos en orden cronológico, así que invertimos).
+    return {equipo: list(reversed(resultados[-5:])) for equipo, resultados in forma.items()}
+
+
+def _puntos_forma_html(equipo, forma_equipos):
+    """HTML de los puntitos de racha (verde/gris/rojo) para un equipo."""
+    resultados = forma_equipos.get(equipo) or []
+    if not resultados:
+        return ""
+    etiquetas = {"V": "Ganó", "E": "Empató", "D": "Perdió"}
+    puntos = "".join(
+        f'<span class="forma-punto" style="background:{_COLOR_FORMA.get(r, "#9ca3af")};" '
+        f'title="{etiquetas.get(r, r)}"></span>'
+        for r in resultados
+    )
+    return f'<span class="forma-dots">{puntos}</span>'
+
+
 try:
     partidos_db = cargar_partidos()
 except Exception as e:
@@ -1448,6 +1576,12 @@ except Exception as e:
 if not partidos_db:
     st.info("Todavía no hay partidos cargados.")
     st.stop()
+
+# Racha de los últimos 5 partidos de cada equipo (para los puntitos de
+# color al lado de cada escudo). Se recalcula en cada corrida del script
+# a partir de `partidos_db` (que ya tiene su propio caché de 30s), así que
+# siempre está en línea con los resultados que se ven en la boleta.
+forma_equipos_reciente = calcular_forma_reciente(partidos_db)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1870,6 +2004,8 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                         esc_v = url_escudo(visitante) or ""
                         img_l = f'<img src="{esc_l}" class="fila-escudo">' if esc_l else "🛡️"
                         img_v = f'<img src="{esc_v}" class="fila-escudo">' if esc_v else "🛡️"
+                        forma_l = _puntos_forma_html(local, forma_equipos_reciente)
+                        forma_v = _puntos_forma_html(visitante, forma_equipos_reciente)
 
                         meta_parts = []
                         if p.get("fecha_partido"): meta_parts.append(str(p["fecha_partido"]))
@@ -1884,7 +2020,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                         col_local, col_vs, col_visit = st.columns([4, 3, 4])
                         with col_local:
                             st.markdown(
-                                f'<div class="fila-equipo">{img_l}<span>{local}</span></div>',
+                                f'<div class="fila-equipo">{img_l}{forma_l}<span>{local}</span></div>',
                                 unsafe_allow_html=True,
                             )
                         with col_vs:
@@ -1902,7 +2038,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                 )
                         with col_visit:
                             st.markdown(
-                                f'<div class="fila-equipo derecha"><span>{visitante}</span>{img_v}</div>',
+                                f'<div class="fila-equipo derecha"><span>{visitante}</span>{forma_v}{img_v}</div>',
                                 unsafe_allow_html=True,
                             )
 
@@ -2100,6 +2236,13 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
 # VISTA JUGADOR NORMAL
 # ══════════════════════════════════════════════════════════════════════════
 if not st.session_state.es_admin:
+    if not bool(_cargar_config_app().get("boleta_habilitada", True)):
+        st.info(
+            "⏸️ La boleta está momentáneamente oculta. El administrador la "
+            "va a volver a habilitar en breve — probá de nuevo más tarde."
+        )
+        st.stop()
+
     mostrar_boleta(
         st.session_state.jugador_id,
         st.session_state.jugador_nombre,
