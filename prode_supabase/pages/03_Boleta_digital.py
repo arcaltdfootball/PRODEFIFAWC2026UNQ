@@ -52,9 +52,9 @@ no existe, correr:
     ALTER TABLE jugadores ADD COLUMN foto_base64 text;
 
 También, para que el admin pueda habilitar/deshabilitar con un botón que
-los jugadores vean e interactúen con la boleta (cuando está deshabilitada,
-a los jugadores se les oculta el juego por completo), hace falta una
-tabla chica de configuración de la app. Si no existe, correr:
+los jugadores carguen/editen el marcador exacto (goles) de sus
+pronósticos (los picks de 1/X/2 siguen funcionando igual), hace falta
+una tabla chica de configuración de la app. Si no existe, correr:
 
     CREATE TABLE IF NOT EXISTS configuracion_app (
         id integer PRIMARY KEY DEFAULT 1,
@@ -621,9 +621,9 @@ def _cargar_config_app():
 
 
 def _set_boleta_habilitada(valor: bool):
-    """Prende/apaga, desde el admin, si los jugadores pueden ver e
-    interactuar con la boleta (el juego). Hace upsert por si la fila
-    id=1 todavía no existe."""
+    """Prende/apaga, desde el admin, si los jugadores pueden cargar/editar
+    el marcador exacto (goles) de sus pronósticos. Los picks de 1/X/2 no
+    se ven afectados. Hace upsert por si la fila id=1 todavía no existe."""
     sb.table("configuracion_app").upsert(
         {"id": 1, "boleta_habilitada": valor}
     ).execute()
@@ -998,24 +998,24 @@ with st.sidebar:
         _config_app = _cargar_config_app()
         _boleta_on = bool(_config_app.get("boleta_habilitada", True))
         if _boleta_on:
-            st.success("👁️ Boleta visible para los jugadores")
+            st.success("⚽ Marcador exacto habilitado")
             if st.button(
-                "🙈 Ocultar boleta a los jugadores",
+                "🔒 Deshabilitar carga de marcador exacto",
                 use_container_width=True,
                 help=(
-                    "Los jugadores dejan de ver e interactuar con el juego "
-                    "(la boleta se les oculta por completo). Vos como admin "
-                    "seguís viendo todo igual."
+                    "Los jugadores dejan de poder cargar/editar el marcador "
+                    "exacto (goles). Los picks de 1/X/2 siguen funcionando "
+                    "normal. Vos como admin no te ves afectado."
                 ),
             ):
                 _set_boleta_habilitada(False)
                 st.rerun()
         else:
-            st.warning("🙈 Boleta OCULTA para los jugadores")
+            st.warning("🔒 Marcador exacto DESHABILITADO")
             if st.button(
-                "👁️ Mostrar boleta a los jugadores",
+                "⚽ Habilitar carga de marcador exacto",
                 use_container_width=True,
-                help="Los jugadores vuelven a ver e interactuar con el juego normalmente.",
+                help="Los jugadores vuelven a poder cargar/editar el marcador exacto normalmente.",
             ):
                 _set_boleta_habilitada(True)
                 st.rerun()
@@ -2113,7 +2113,42 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                     )
 
                             col_gl, col_gv, col_reset, col_estado = st.columns([1, 1, 1.3, 1.6])
-                            if mostrar_goles:
+                            _marcador_exacto_habilitado = (
+                                st.session_state.es_admin
+                                or bool(_cargar_config_app().get("boleta_habilitada", True))
+                            )
+                            if not _marcador_exacto_habilitado:
+                                # El admin deshabilitó la carga de marcador
+                                # exacto: se sigue pudiendo elegir 1/X/2
+                                # arriba, pero los goles quedan bloqueados.
+                                # Si el jugador ya tenía un marcador cargado
+                                # de antes, se lo mostramos de solo lectura
+                                # (no se pierde lo que ya había cargado).
+                                gl_new_pred = st.session_state.get(
+                                    _gl_key, gl_pred_prev if gl_pred_prev is not None else 0
+                                )
+                                gv_new_pred = st.session_state.get(
+                                    _gv_key, gv_pred_prev if gv_pred_prev is not None else 0
+                                )
+                                with col_gl:
+                                    st.caption(f"Goles {local}")
+                                    if gl_pred_prev is not None:
+                                        st.markdown(
+                                            f"<div style='text-align:center;font-weight:600;'>{gl_pred_prev}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                    else:
+                                        st.caption("🔒 Deshabilitado")
+                                with col_gv:
+                                    st.caption(f"Goles {visitante}")
+                                    if gv_pred_prev is not None:
+                                        st.markdown(
+                                            f"<div style='text-align:center;font-weight:600;'>{gv_pred_prev}</div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                    else:
+                                        st.caption("🔒 Deshabilitado")
+                            elif mostrar_goles:
                                 with col_gl:
                                     gl_new_pred = st.number_input(
                                         f"Goles {local}", min_value=0, max_value=15,
@@ -2236,13 +2271,6 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
 # VISTA JUGADOR NORMAL
 # ══════════════════════════════════════════════════════════════════════════
 if not st.session_state.es_admin:
-    if not bool(_cargar_config_app().get("boleta_habilitada", True)):
-        st.info(
-            "⏸️ La boleta está momentáneamente oculta. El administrador la "
-            "va a volver a habilitar en breve — probá de nuevo más tarde."
-        )
-        st.stop()
-
     mostrar_boleta(
         st.session_state.jugador_id,
         st.session_state.jugador_nombre,
