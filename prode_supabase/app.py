@@ -474,11 +474,13 @@ try:
     ranking = obtener_ranking_mes_actual()
     mes_actual_label = obtener_mes_actual_label()
 
-    if ranking:
-        max_puntos = ranking[0]["puntos"]
+    # Si nadie tiene puntos en el mes en curso, NO hay líderes: antes, con
+    # todos en 0, todos los jugadores quedaban "empatados" como ganadores y
+    # se armaba el aviso de empate y el reparto del pozo entre todos.
+    max_puntos = ranking[0]["puntos"] if ranking else 0
+    if max_puntos > 0:
         ganadores = [r for r in ranking if r["puntos"] == max_puntos]
     else:
-        max_puntos = 0
         ganadores = []
 
     pozo_fmt = f"${pozo:,.0f}".replace(",", ".")
