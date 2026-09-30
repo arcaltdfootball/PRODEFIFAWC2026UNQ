@@ -208,15 +208,9 @@ except Exception as e:
     st.error(f"Error al conectar con la base de datos: {e}")
     st.stop()
 
-try:
-    ranking = obtener_ranking()
-except Exception as e:
-    st.error(f"Error al conectar con la base de datos: {e}")
-    st.exception(e)
-    st.stop()
-
-# `obtener_ranking()` ya devuelve solo jugadores habilitados (pagaron y no
-# están pausados por el admin) — el filtro vive en ranking.py.
+# Jugadores habilitados = pagaron y no están pausados por el admin. Solo se
+# usa para el mes que todavía no tiene puntos; en el resto de los rankings se
+# muestran TODOS los que hayan jugado alguna vez.
 try:
     _jugadores_raw = _fetch_all(
         lambda: sb.table("jugadores").select("id, nombre, pagado, activo")
@@ -245,9 +239,10 @@ def _nombre_mes_actual():
 
 # ── Ranking mensual: agrupa por Fecha→Mes asignado desde el admin ──────────
 def obtener_meses_disponibles():
-    """Devuelve los meses configurados, ordenados del más reciente al más
-    antiguo (según la fecha/jornada más chica que tengan asignada), con el
-    mes actual siempre primero si está entre los configurados."""
+    """Devuelve los meses configurados ordenados del más reciente al más
+    antiguo, según la Fecha/jornada más alta que tenga asignada cada mes.
+    Así, el último mes que se agrega desde el admin (el de fechas más
+    avanzadas) aparece primero."""
     try:
         filas = sb.table("fecha_mes_map").select("fecha_numero, mes").execute().data or []
     except Exception:
@@ -256,57 +251,25 @@ def obtener_meses_disponibles():
     for r in filas:
         orden.setdefault(r["mes"], []).append(r["fecha_numero"])
 
-    meses_ordenados = sorted(orden.keys(), key=lambda m: min(orden[m]), reverse=True)
-
-    mes_actual = _nombre_mes_actual()
-    if mes_actual in meses_ordenados:
-        meses_ordenados.remove(mes_actual)
-        meses_ordenados.insert(0, mes_actual)
-
-    return meses_ordenados
+    return sorted(orden.keys(), key=lambda m: max(orden[m]), reverse=True)
 
 
-def obtener_ranking_mensual(mes, ids_habilitados):
-    """Misma lógica de puntaje que ranking.obtener_ranking() (1 pto por
-    signo, 3 en total si es exacto; "disputado" = el partido ya tiene
-    goles_local/goles_visitante cargados), pero acotada a los partidos de
-    las Fechas asignadas a `mes`."""
-    fechas = [
-        r["fecha_numero"]
-        for r in sb.table("fecha_mes_map").select("fecha_numero").eq("mes", mes).execute().data or []
-    ]
-    if not fechas:
-        return []
-
-    partidos_mes = _fetch_all(
-        lambda: sb.table("partidos")
-        .select("id, goles_local, goles_visitante")
-        .in_("fecha_numero", fechas)
-    )
-    partidos_por_id = {p["id"]: p for p in partidos_mes}
-    if not partidos_por_id:
-        return []
-
-    pronos = _fetch_all(
-        lambda: sb.table("pronosticos")
-        .select("jugador_id, partido_id, puntos")
-        .in_("partido_id", list(partidos_por_id.keys()))
-    )
-
+def _agregar_ranking(partidos_por_id, pronos):
+    """Suma puntos por jugador (1 pto por signo, 3 si es exacto) usando solo
+    partidos ya disputados (con goles cargados). NO filtra por boleta paga:
+    entran todos los que hayan jugado alguna vez."""
     agregados = {}
     for pr in pronos:
-        jid = pr["jugador_id"]
-        if jid not in ids_habilitados:
-            continue
         partido = partidos_por_id.get(pr["partido_id"])
         if not partido:
             continue
-        gl_real = partido.get("goles_local")
-        gv_real = partido.get("goles_visitante")
-        if gl_real is None or gv_real is None:
+        if partido.get("goles_local") is None or partido.get("goles_visitante") is None:
             continue  # partido todavía no jugado: no cuenta como disputado
 
-        a = agregados.setdefault(jid, {"puntos": 0, "aciertos": 0, "disputados": 0, "aciertos_exactos": 0})
+        a = agregados.setdefault(
+            pr["jugador_id"],
+            {"puntos": 0, "aciertos": 0, "disputados": 0, "aciertos_exactos": 0},
+        )
         a["disputados"] += 1
         pts = pr.get("puntos") or 0
         a["puntos"] += pts
@@ -327,8 +290,66 @@ def obtener_ranking_mensual(mes, ids_habilitados):
         }
         for jid, a in agregados.items()
     ]
-    filas.sort(key=lambda x: x["puntos"], reverse=True)
+    filas.sort(key=lambda x: (-x["puntos"], x["nombre"].lower()))
     return filas
+
+
+def obtener_ranking_general():
+    """Ranking histórico con TODOS los participantes que jugaron alguna vez
+    (estén o no con la boleta paga / habilitada)."""
+    partidos = _fetch_all(
+        lambda: sb.table("partidos").select("id, goles_local, goles_visitante")
+    )
+    partidos_por_id = {p["id"]: p for p in partidos}
+    pronos = _fetch_all(
+        lambda: sb.table("pronosticos").select("jugador_id, partido_id, puntos")
+    )
+    return _agregar_ranking(partidos_por_id, pronos)
+
+
+def obtener_ranking_mensual(mes, ids_habilitados):
+    """Ranking de las Fechas asignadas a `mes`.
+
+    - Si el mes ya tiene puntos: muestra a TODOS los que jugaron (sin importar
+      si tienen la boleta paga).
+    - Si el mes todavía no tiene puntos (mes por disputarse): muestra solo a
+      los jugadores con boleta habilitada, con 0 puntos.
+
+    Devuelve (filas, por_disputar)."""
+    fechas = [
+        r["fecha_numero"]
+        for r in sb.table("fecha_mes_map").select("fecha_numero").eq("mes", mes).execute().data or []
+    ]
+
+    filas = []
+    if fechas:
+        partidos_mes = _fetch_all(
+            lambda: sb.table("partidos")
+            .select("id, goles_local, goles_visitante")
+            .in_("fecha_numero", fechas)
+        )
+        partidos_por_id = {p["id"]: p for p in partidos_mes}
+        if partidos_por_id:
+            pronos = _fetch_all(
+                lambda: sb.table("pronosticos")
+                .select("jugador_id, partido_id, puntos")
+                .in_("partido_id", list(partidos_por_id.keys()))
+            )
+            filas = _agregar_ranking(partidos_por_id, pronos)
+
+    if filas:
+        return filas, False
+
+    # Mes sin puntos todavía: solo jugadores habilitados, en orden alfabético
+    habilitados = sorted(
+        (j["nombre"] for j in _jugadores_raw if j["id"] in ids_habilitados),
+        key=str.lower,
+    )
+    filas = [
+        {"nombre": n, "puntos": 0, "aciertos": 0, "disputados": 0, "aciertos_exactos": 0}
+        for n in habilitados
+    ]
+    return filas, True
 
 
 _meses_disponibles = obtener_meses_disponibles()
@@ -398,7 +419,7 @@ def build_df(ranking_data, session_key):
 pos_class = {1: "gold", 2: "silver", 3: "bronze"}
 
 
-def build_card(row, puntos_1):
+def build_card(row, puntos_1, sin_medallas=False):
     pos         = int(row["Posición"])
     nombre      = row["Participante"]
     puntos      = row["Puntos"]
@@ -409,13 +430,17 @@ def build_card(row, puntos_1):
     efectividad = row["Efectividad %"]
     exactos     = row["Exactos"]
 
-    pc = pos_class.get(pos, "")
-    card_extra_class = "gold-card" if pos == 1 else ("silver-card" if pos == 2 else "")
+    if sin_medallas:
+        pc, card_extra_class, pos_txt = "", "", "—"
+    else:
+        pc = pos_class.get(pos, "")
+        card_extra_class = "gold-card" if pos == 1 else ("silver-card" if pos == 2 else "")
+        pos_txt = pos
 
     pills_html = ""
 
     # Aciertos de signo (1 punto)
-    if aciertos is not None and disputados is not None:
+    if disputados:
         pills_html += (
             f'<div class="stat-pill">'
             f'<span class="label">Aciertos</span>'
@@ -456,7 +481,7 @@ def build_card(row, puntos_1):
     return (
         f'<div class="glass {card_extra_class}" style="padding:8px 12px;margin-bottom:6px;">'
         f'<div class="rank-card" style="gap:8px;">'
-        f'<div class="rank-pos {pc}" style="font-size:1.6rem;min-width:30px;">{pos}</div>'
+        f'<div class="rank-pos {pc}" style="font-size:1.6rem;min-width:30px;">{pos_txt}</div>'
         f'<div class="trend {trend_cls}" style="font-size:0.85rem;min-width:16px;">{trend_icon}</div>'
         f'<div style="flex:1; min-width:0;">'
         f'<div class="rank-name" style="font-size:0.85rem;">{nombre}</div>'
@@ -470,7 +495,7 @@ def build_card(row, puntos_1):
     )
 
 
-def render_ranking(df_full, busqueda, session_key):
+def render_ranking(df_full, busqueda, session_key, sin_medallas=False):
     df = df_full.copy()
     if busqueda:
         df = df[df["Participante"].str.contains(busqueda, case=False)]
@@ -483,20 +508,29 @@ def render_ranking(df_full, busqueda, session_key):
 
     rows_list = list(df.iterrows())
     puntos_1 = df[df["Posición"] == 1]["Puntos"].values[0] if not df[df["Posición"] == 1].empty else None
+    if sin_medallas:
+        puntos_1 = None
 
     mid = (len(rows_list) + 1) // 2
     col_a, col_b = st.columns(2)
 
     with col_a:
         for _, row in rows_list[:mid]:
-            st.markdown(build_card(row, puntos_1), unsafe_allow_html=True)
+            st.markdown(build_card(row, puntos_1, sin_medallas), unsafe_allow_html=True)
 
     with col_b:
         for _, row in rows_list[mid:]:
-            st.markdown(build_card(row, puntos_1), unsafe_allow_html=True)
+            st.markdown(build_card(row, puntos_1, sin_medallas), unsafe_allow_html=True)
 
 
 # ── Preparar DataFrame ────────────────────────────────────────────────────────
+try:
+    ranking = obtener_ranking_general()
+except Exception as e:
+    st.error(f"Error al calcular el ranking general: {e}")
+    st.exception(e)
+    st.stop()
+
 df_general = build_df(ranking, "pos_ant_general")
 
 # ── Tabs: un tab por mes configurado (mes actual primero) + General al final ──
@@ -526,16 +560,18 @@ with _tab_general:
 
 for _tab, _mes in zip(_tabs[:-1], _meses_disponibles):
     with _tab:
-        _ranking_mes = obtener_ranking_mensual(_mes, _ids_habilitados)
+        _ranking_mes, _por_disputar = obtener_ranking_mensual(_mes, _ids_habilitados)
         if not _ranking_mes:
-            st.info(f"Todavía no hay puntos cargados para {_mes}.")
+            st.info(f"Todavía no hay participantes para {_mes}.")
         else:
+            if _por_disputar:
+                st.info(f"{_mes} todavía no tiene puntos: se muestran los participantes con boleta habilitada.")
             _key_mes = f"pos_ant_mes_{_mes}"
             df_mes = build_df(_ranking_mes, _key_mes)
             busqueda_mes = st.text_input(
                 "🔍  Buscar participante", placeholder="Nombre...", key=f"busq_{_mes}"
             )
-            if TIENE_EXCEL:
+            if TIENE_EXCEL and not _por_disputar:
                 col_exp_m, _ = st.columns([1, 4])
                 with col_exp_m:
                     try:
@@ -549,4 +585,4 @@ for _tab, _mes in zip(_tabs[:-1], _meses_disponibles):
                         )
                     except Exception:
                         pass
-            render_ranking(df_mes, busqueda_mes, _key_mes)
+            render_ranking(df_mes, busqueda_mes, _key_mes, sin_medallas=_por_disputar)
