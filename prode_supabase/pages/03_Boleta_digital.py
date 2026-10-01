@@ -171,51 +171,86 @@ def crear_preferencia_pago(jugador_id, nombre: str) -> str:
     return pref["init_point"]
 
 
+def _estado_pago_guardado(jugador_id):
+    """Devuelve (pagado, mp_payment_id) tal como están HOY en la base, o None
+    si no se pudo leer (en ese caso nunca se habilita a nadie: ante la duda,
+    no se marca como pagado)."""
+    try:
+        data = _con_timeout(
+            lambda: sb.table("jugadores")
+            .select("pagado, mp_payment_id")
+            .eq("id", jugador_id)
+            .execute()
+            .data,
+            timeout=8,
+        )
+    except Exception:
+        return None
+    if not data:
+        return None
+    return bool(data[0].get("pagado")), data[0].get("mp_payment_id")
+
+
 def verificar_pago(jugador_id, payment_id: str) -> bool:
     """Consulta el estado real del pago contra la API de Mercado Pago
-    (nunca confiar solo en los parámetros que vienen en la URL de retorno)."""
+    (nunca confiar solo en los parámetros que vienen en la URL de retorno).
+
+    Un pago que ya se usó para habilitar al jugador en una instancia anterior
+    (queda guardado en `mp_payment_id`) NO vuelve a habilitarlo si el admin
+    después lo marcó como NO pagado: cada instancia requiere un pago nuevo."""
     try:
         resultado = _con_timeout(sdk.payment().get, payment_id)
         pago = resultado["response"]
     except Exception:
         return False
-    if (
+    if not (
         pago.get("status") == "approved"
         and str(pago.get("external_reference")) == str(jugador_id)
     ):
-        try:
-            _con_timeout(
-                lambda: sb.table("jugadores").update({
-                    "pagado": True,
-                    "mp_payment_id": payment_id,
-                }).eq("id", jugador_id).execute(),
-                timeout=8,
-            )
-        except Exception:
-            pass  # el pago SÍ está confirmado en MP; si Supabase falla acá,
-            # igual devolvemos True — la auto-cura de más abajo lo va a
-            # volver a intentar marcar en el próximo ingreso.
-        return True
-    return False
+        return False
+
+    estado = _estado_pago_guardado(jugador_id)
+    if estado is None:
+        return False
+    ya_pagado, id_guardado = estado
+    if id_guardado is not None and str(id_guardado) == str(payment_id) and not ya_pagado:
+        return False  # pago viejo, ya consumido en una instancia anterior
+
+    try:
+        _con_timeout(
+            lambda: sb.table("jugadores").update({
+                "pagado": True,
+                "mp_payment_id": payment_id,
+            }).eq("id", jugador_id).execute(),
+            timeout=8,
+        )
+    except Exception:
+        pass  # el pago SÍ está confirmado en MP; si Supabase falla acá,
+        # igual devolvemos True — la auto-cura de más abajo lo va a
+        # volver a intentar marcar en el próximo ingreso.
+    return True
 
 
 def verificar_pago_por_referencia(jugador_id) -> bool:
     """Verificación de RESPALDO que no depende de que el navegador haya
     vuelto limpio desde Mercado Pago con los parámetros en la URL.
 
-    El flujo normal (`verificar_pago`) necesita el `payment_id` que viaja
-    en el query string del back_url. En el celular eso se pierde seguido
-    (el navegador in-app de WhatsApp/Instagram, Safari, o la app del banco
-    a veces no vuelven bien, o el usuario cierra la pestaña de MP a mano
-    antes de que redirija) y ahí el jugador pagó de verdad pero el sistema
-    nunca se entera.
+    Le pregunta directo a la API de Mercado Pago "¿hay algún pago aprobado
+    con este external_reference (= id del jugador)?". Si lo encuentra, marca
+    `pagado = True`.
 
-    Esta función no necesita ningún dato de la URL: le pregunta directo a
-    la API de Mercado Pago "¿hay algún pago aprobado con este
-    external_reference (= id del jugador)?". Si lo encuentra, marca
-    `pagado = True` igual que el flujo normal. Se puede llamar tanto
-    automáticamente (auto-cura al cargar la página) como a mano (botón
-    "Ya pagué, verificar ahora")."""
+    IMPORTANTE: solo cuenta un pago NUEVO. Se recorren los pagos del más
+    reciente al más viejo y, apenas aparece el pago que ya está guardado en
+    `mp_payment_id` (el que habilitó al jugador la vez anterior), se corta:
+    ese y todos los anteriores ya se usaron. Antes se aceptaba cualquier pago
+    aprobado de la historia, así que después de "Marcar TODOS como NO pagado"
+    (o de desmarcar a un jugador) bastaba que el jugador entrara para que un
+    pago viejo lo volviera a habilitar solo, sin haber pagado esta vez."""
+    estado = _estado_pago_guardado(jugador_id)
+    if estado is None:
+        return False
+    ya_pagado, id_guardado = estado
+
     try:
         resultado = _con_timeout(
             sdk.payment().search,
@@ -229,7 +264,12 @@ def verificar_pago_por_referencia(jugador_id) -> bool:
     except Exception:
         return False
 
+    # No dependemos de que la API respete el orden pedido: ordenamos acá.
+    pagos = sorted(pagos, key=lambda x: x.get("date_created") or "", reverse=True)
+
     for pago in pagos:
+        if id_guardado is not None and str(pago.get("id")) == str(id_guardado):
+            return ya_pagado  # llegamos al pago ya usado: lo demás es más viejo
         if (
             pago.get("status") == "approved"
             and str(pago.get("external_reference")) == str(jugador_id)
@@ -246,6 +286,32 @@ def verificar_pago_por_referencia(jugador_id) -> bool:
                 pass
             return True
     return False
+
+
+def _mostrar_detalle_pago(payment_id, jugador_id):
+    """Muestra (para el admin) los datos reales de un pago guardado en
+    `mp_payment_id`, consultados a Mercado Pago, para poder auditar si es
+    legítimo: estado, monto, fecha, mail de quien pagó y a qué jugador
+    corresponde."""
+    try:
+        pago = _con_timeout(sdk.payment().get, payment_id)["response"]
+    except Exception as e:
+        st.error(f"No se pudo consultar el pago en Mercado Pago: {e}")
+        return
+    if not pago or pago.get("message") or pago.get("status") is None:
+        st.warning(f"Mercado Pago no devolvió datos para ese pago: {pago}")
+        return
+    payer = pago.get("payer") or {}
+    coincide = str(pago.get("external_reference")) == str(jugador_id)
+    st.markdown(
+        f"- **Estado:** `{pago.get('status')}` ({pago.get('status_detail')})\n"
+        f"- **Monto:** {pago.get('transaction_amount')} {pago.get('currency_id')}\n"
+        f"- **Creado:** {pago.get('date_created')}\n"
+        f"- **Acreditado:** {pago.get('date_approved')}\n"
+        f"- **Mail de quien pagó:** {payer.get('email') or '—'}\n"
+        f"- **Descripción:** {pago.get('description') or '—'}\n"
+        f"- **Pertenece a este jugador:** {'✅ sí' if coincide else '❌ NO (external_reference distinto)'}"
+    )
 
 
 @st.cache_data(show_spinner=False)
@@ -441,17 +507,6 @@ st.markdown(
     }
     .tp-acierto-chip.tp-buena { background: rgba(74,222,128,0.13); color: #4ade80; border-color: rgba(74,222,128,0.25); }
     .tp-acierto-chip.tp-mala  { background: rgba(239,68,68,0.12);  color: #f87171; border-color: rgba(239,68,68,0.22); }
-    .tp-zona-label {
-        font-family: 'Inter', sans-serif; font-size: 0.68rem; font-weight: 700;
-        text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8;
-        margin-top: 10px; margin-bottom: 2px;
-    }
-    .tp-zona-label:first-child { margin-top: 0; }
-    .tp-total-aciertos {
-        font-family: 'Inter', sans-serif; font-size: 0.82rem; font-weight: 700;
-        color: #e2e8f0; margin-top: 10px; padding-top: 8px;
-        border-top: 1px solid rgba(148,163,184,0.15);
-    }
 
     /* ═══════════ TARJETA DE PERFIL — usuario + Alias/CBU (glass) ═══════════ */
     .tarjeta-perfil {
@@ -1166,169 +1221,6 @@ if not sesion_activa:
     st.stop()
 
 # ══════════════════════════════════════════════════════════════════════════
-# DATOS COMPARTIDOS
-# ══════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=30)
-def cargar_partidos():
-    return sb.table("partidos").select("*").execute().data
-
-
-@st.cache_data(ttl=15)
-def cargar_todos_los_puntos():
-    """
-    Trae jugador_id, partido_id y puntos de TODOS los pronósticos en una sola
-    consulta. Se usa para calcular el ranking y el resumen de aciertos por
-    fecha de cada jugador en su card del panel admin, sin tener que hacer
-    una consulta a Supabase por cada jugador (eso sería lento con muchos
-    participantes). Se invalida junto con el resto de `st.cache_data` cada
-    vez que se cargan/resetean resultados.
-    """
-    res = sb.table("pronosticos").select("jugador_id, partido_id, puntos").execute()
-    return res.data or []
-
-
-def cargar_pronosticos_de(j_id):
-    res = (
-        sb.table("pronosticos")
-        .select("id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos, sin_marcador")
-        .eq("jugador_id", j_id)
-        .execute()
-    )
-    return {row["partido_id"]: row for row in (res.data or [])}
-
-
-def _pron_cache_key(j_id):
-    return f"_pron_cache_{j_id}"
-
-
-def _invalidar_cache_pron(j_id=None):
-    """
-    Invalida el caché en memoria (session_state) de pronósticos.
-    Si se pasa `j_id`, borra solo el caché de ese jugador. Si no, borra el
-    caché de TODOS los jugadores (para acciones masivas tipo "reset total"
-    o cuando se cargan resultados y cambian los puntos de todo el mundo).
-    """
-    if j_id is not None:
-        st.session_state.pop(_pron_cache_key(j_id), None)
-    else:
-        for k in list(st.session_state.keys()):
-            if k.startswith("_pron_cache_"):
-                del st.session_state[k]
-
-
-def _invalidar_cache_resultados(incluir_puntos: bool = True):
-    """
-    Invalida SOLO lo que realmente cambia al cargar/resetear un resultado o
-    editar el horario de un partido: la lista de partidos (`cargar_partidos`)
-    y, si corresponde, el resumen de puntos (`cargar_todos_los_puntos` +
-    el caché de boletas por jugador en session_state).
-
-    Antes de esto, cada una de estas acciones llamaba a `st.cache_data.clear()`
-    a secas — eso no limpia solo lo de esta página: borra de un saque el
-    caché de TODA la app (ranking, dashboard, escudos, etc.), obligando a que
-    la próxima vez que cualquier página pida cualquier dato tenga que
-    recalcularlo/refetchearlo de cero, de forma sincrónica. Con muchos
-    partidos y jugadores eso es justamente lo que se sentía como "se cuelga,
-    piensa y piensa". Invalidando puntual, el resto de la app sigue sirviendo
-    desde su propio caché y se refresca solo, dentro de su propio `ttl`
-    (30s para partidos, 15s para puntos) — no hace falta forzarlo desde acá.
-    """
-    cargar_partidos.clear()
-    if incluir_puntos:
-        cargar_todos_los_puntos.clear()
-        _invalidar_cache_pron()
-
-
-def agrupar_por_zona_fecha(partidos):
-    por_zona = {}
-    for p in partidos:
-        por_zona.setdefault(p["zona"], {}).setdefault(p["fecha_numero"], []).append(p)
-    zonas_orden = sorted(
-        por_zona.keys(), key=lambda z: (0 if z == "A" else 1 if z == "B" else 2, z)
-    )
-    return por_zona, zonas_orden
-
-
-def etiqueta_zona(z):
-    return "Interzonal" if z == "Interzonal" else f"Zona {z}"
-
-
-def _armar_resumen_aciertos_por_zona_y_fecha(partidos):
-    """
-    Agrupa los partidos YA JUGADOS por (zona, fecha_numero) — a diferencia de
-    agruparlos solo por fecha_numero, esto evita que Zona A, Zona B e
-    Interzonal se pisen entre sí cuando comparten el mismo número de fecha
-    (ej. "Fecha 1" de Zona A y "Fecha 1" de Zona B son grupos DISTINTOS).
-
-    Devuelve:
-      - _partidos_por_zona_fecha: {zona: {fecha_numero: [partido_id, ...]}}
-      - _zonas_con_resultado: lista de zonas ordenada (A, B, Interzonal)
-      - _fechas_por_zona: {zona: [fecha_numero, ...]} ordenadas
-    """
-    _partidos_por_zona_fecha = {}
-    for _p in partidos:
-        if _p.get("goles_local") is not None and _p.get("goles_visitante") is not None:
-            _z = _p.get("zona")
-            _f = _p.get("fecha_numero")
-            _partidos_por_zona_fecha.setdefault(_z, {}).setdefault(_f, []).append(_p["id"])
-
-    _zonas_con_resultado = sorted(
-        _partidos_por_zona_fecha.keys(),
-        key=lambda z: (0 if z == "A" else 1 if z == "B" else 2, z),
-    )
-    _fechas_por_zona = {
-        z: sorted(_partidos_por_zona_fecha[z].keys(), key=lambda f: int(f))
-        for z in _zonas_con_resultado
-    }
-    return _partidos_por_zona_fecha, _zonas_con_resultado, _fechas_por_zona
-
-
-def _chips_html_resumen_aciertos(pron_jugador, partidos_por_zona_fecha, zonas_con_resultado, fechas_por_zona):
-    """
-    Arma el HTML de los chips "Fecha X: aciertos/disputados" agrupados por
-    zona (con un mini-título de zona antes de cada grupo de chips), y además
-    suma el total combinado de Zona A + Zona B + Interzonal.
-
-    `pron_jugador` es un dict {partido_id: puntos} de UN jugador puntual.
-    """
-    _bloques_html = []
-    _total_aciertos_general = 0
-    _total_disputados_general = 0
-
-    for _z in zonas_con_resultado:
-        _chips_html = []
-        for _f in fechas_por_zona[_z]:
-            _ids_f = partidos_por_zona_fecha[_z][_f]
-            _total_f = len(_ids_f)
-            _aciertos_f = sum(
-                1 for _pid in _ids_f if pron_jugador.get(_pid) not in (None, 0)
-            )
-            _total_aciertos_general += _aciertos_f
-            _total_disputados_general += _total_f
-            _clase = "tp-buena" if _aciertos_f == _total_f and _total_f > 0 else (
-                "tp-mala" if _aciertos_f == 0 else ""
-            )
-            _chips_html.append(
-                f'<span class="tp-acierto-chip {_clase}">F{_f}: {_aciertos_f}/{_total_f}</span>'
-            )
-        if _chips_html:
-            _bloques_html.append(
-                f'<div class="tp-zona-label">{etiqueta_zona(_z)}</div>'
-                f'<div class="tp-aciertos-wrap">{"".join(_chips_html)}</div>'
-            )
-
-    _resumen_total_html = ""
-    if _total_disputados_general:
-        _resumen_total_html = (
-            f'<div class="tp-total-aciertos">🎯 Total general: '
-            f'{_total_aciertos_general}/{_total_disputados_general} aciertos '
-            f'(Zona A + Zona B + Interzonal)</div>'
-        )
-
-    return "".join(_bloques_html), _resumen_total_html
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # TARJETA DE PERFIL — nombre de usuario + Alias/CBU para poder cobrar el
 # premio si gana. Solo se muestra a jugadores (no al admin, que no cobra
 # premio). El admin puede ver/editar el Alias/CBU de cada uno desde la
@@ -1384,29 +1276,6 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
         """,
         unsafe_allow_html=True,
     )
-
-    # ── Resumen completo de aciertos por fecha (Zona A, Zona B e Interzonal),
-    # con el mismo criterio que usa el admin en la card de cada jugador, pero
-    # visible acá para que cada participante lo vea directamente al ingresar
-    # con su propio usuario ──
-    try:
-        _partidos_perfil = cargar_partidos()
-        _pron_propio_raw = cargar_pronosticos_de(st.session_state.jugador_id)
-        _pron_propio = {pid: row.get("puntos") for pid, row in _pron_propio_raw.items()}
-        _pxz_perfil, _zonas_perfil, _fechas_x_zona_perfil = (
-            _armar_resumen_aciertos_por_zona_y_fecha(_partidos_perfil)
-        )
-        _bloques_perfil_html, _total_perfil_html = _chips_html_resumen_aciertos(
-            _pron_propio, _pxz_perfil, _zonas_perfil, _fechas_x_zona_perfil
-        )
-    except Exception:
-        _bloques_perfil_html, _total_perfil_html = "", ""
-
-    with st.expander("📊 Mi resumen de aciertos por fecha", expanded=False):
-        if _bloques_perfil_html:
-            st.markdown(_bloques_perfil_html + _total_perfil_html, unsafe_allow_html=True)
-        else:
-            st.caption("Todavía no hay resultados cargados para mostrar el resumen.")
 
     with st.expander(
         "💸 Alias / CBU para cobrar el premio" if not _alias_actual
@@ -1625,6 +1494,92 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
         st.stop()
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# DATOS COMPARTIDOS
+# ══════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=30)
+def cargar_partidos():
+    return sb.table("partidos").select("*").execute().data
+
+
+@st.cache_data(ttl=15)
+def cargar_todos_los_puntos():
+    """
+    Trae jugador_id, partido_id y puntos de TODOS los pronósticos en una sola
+    consulta. Se usa para calcular el ranking y el resumen de aciertos por
+    fecha de cada jugador en su card del panel admin, sin tener que hacer
+    una consulta a Supabase por cada jugador (eso sería lento con muchos
+    participantes). Se invalida junto con el resto de `st.cache_data` cada
+    vez que se cargan/resetean resultados.
+    """
+    res = sb.table("pronosticos").select("jugador_id, partido_id, puntos").execute()
+    return res.data or []
+
+
+def cargar_pronosticos_de(j_id):
+    res = (
+        sb.table("pronosticos")
+        .select("id, partido_id, signo_pred, goles_local_pred, goles_visitante_pred, puntos, sin_marcador")
+        .eq("jugador_id", j_id)
+        .execute()
+    )
+    return {row["partido_id"]: row for row in (res.data or [])}
+
+
+def _pron_cache_key(j_id):
+    return f"_pron_cache_{j_id}"
+
+
+def _invalidar_cache_pron(j_id=None):
+    """
+    Invalida el caché en memoria (session_state) de pronósticos.
+    Si se pasa `j_id`, borra solo el caché de ese jugador. Si no, borra el
+    caché de TODOS los jugadores (para acciones masivas tipo "reset total"
+    o cuando se cargan resultados y cambian los puntos de todo el mundo).
+    """
+    if j_id is not None:
+        st.session_state.pop(_pron_cache_key(j_id), None)
+    else:
+        for k in list(st.session_state.keys()):
+            if k.startswith("_pron_cache_"):
+                del st.session_state[k]
+
+
+def _invalidar_cache_resultados(incluir_puntos: bool = True):
+    """
+    Invalida SOLO lo que realmente cambia al cargar/resetear un resultado o
+    editar el horario de un partido: la lista de partidos (`cargar_partidos`)
+    y, si corresponde, el resumen de puntos (`cargar_todos_los_puntos` +
+    el caché de boletas por jugador en session_state).
+
+    Antes de esto, cada una de estas acciones llamaba a `st.cache_data.clear()`
+    a secas — eso no limpia solo lo de esta página: borra de un saque el
+    caché de TODA la app (ranking, dashboard, escudos, etc.), obligando a que
+    la próxima vez que cualquier página pida cualquier dato tenga que
+    recalcularlo/refetchearlo de cero, de forma sincrónica. Con muchos
+    partidos y jugadores eso es justamente lo que se sentía como "se cuelga,
+    piensa y piensa". Invalidando puntual, el resto de la app sigue sirviendo
+    desde su propio caché y se refresca solo, dentro de su propio `ttl`
+    (30s para partidos, 15s para puntos) — no hace falta forzarlo desde acá.
+    """
+    cargar_partidos.clear()
+    if incluir_puntos:
+        cargar_todos_los_puntos.clear()
+        _invalidar_cache_pron()
+
+
+def agrupar_por_zona_fecha(partidos):
+    por_zona = {}
+    for p in partidos:
+        por_zona.setdefault(p["zona"], {}).setdefault(p["fecha_numero"], []).append(p)
+    zonas_orden = sorted(
+        por_zona.keys(), key=lambda z: (0 if z == "A" else 1 if z == "B" else 2, z)
+    )
+    return por_zona, zonas_orden
+
+
+def etiqueta_zona(z):
+    return "Interzonal" if z == "Interzonal" else f"Zona {z}"
 
 
 _COLOR_FORMA = {"V": "#22c55e", "E": "#9ca3af", "D": "#ef4444"}  # verde / gris / rojo
@@ -2948,7 +2903,8 @@ def _tab_jugadores_fragment():
             "Pone `pagado = No` a **todos** los jugadores de una sola vez, en vez "
             "de tener que desmarcarlos uno por uno. Útil para arrancar una nueva "
             "instancia/mes del Prode desde cero en materia de pagos. No toca el "
-            "estado de pausado/activo de nadie."
+            "estado de pausado/activo de nadie. Los pagos de Mercado Pago ya registrados "
+            "quedan como \"usados\": no vuelven a habilitar a nadie automáticamente."
         )
 
         if not st.session_state.confirmar_marcar_no_pagado_todos:
@@ -3062,13 +3018,12 @@ def _tab_jugadores_fragment():
             _posicion_por_jugador = {j["id"]: i + 1 for i, j in enumerate(_habilitados_ordenados)}
             _total_habilitados = len(_habilitados_ordenados)
 
-            # Partidos ya jugados, agrupados por ZONA y luego por Fecha dentro
-            # de cada zona (Zona A, Zona B e Interzonal por separado, porque
-            # comparten la misma numeración de fecha y agruparlos solo por
-            # fecha_numero los mezclaba a todos bajo una sola clave).
-            _partidos_por_zona_fecha, _zonas_con_resultado, _fechas_por_zona = (
-                _armar_resumen_aciertos_por_zona_y_fecha(partidos_db)
-            )
+            # Partidos ya jugados, agrupados por Fecha (todas las zonas juntas)
+            _partidos_jugados_por_fecha = {}
+            for _p in partidos_db:
+                if _p.get("goles_local") is not None and _p.get("goles_visitante") is not None:
+                    _partidos_jugados_por_fecha.setdefault(_p["fecha_numero"], []).append(_p["id"])
+            _fechas_con_resultado = sorted(_partidos_jugados_por_fecha.keys(), key=int)
 
             for j in jugadores:
                 _pago_ok = j.get("pagado")
@@ -3171,25 +3126,44 @@ def _tab_jugadores_fragment():
                             )
 
                     # ── Resumen de aciertos por fecha (mismos datos que cada
-                    # expander "Fecha X" de la boleta, resumidos acá mismo),
-                    # separado por Zona A / Zona B / Interzonal y con el total
-                    # general de las tres sumado al pie ──
+                    # expander "Fecha X" de la boleta, resumidos acá mismo) ──
                     _pron_j = _pron_por_jugador.get(j["id"], {})
-                    _bloques_html, _total_html = _chips_html_resumen_aciertos(
-                        _pron_j, _partidos_por_zona_fecha, _zonas_con_resultado, _fechas_por_zona
-                    )
-                    if _bloques_html:
-                        st.markdown(_bloques_html + _total_html, unsafe_allow_html=True)
+                    _chips_html = []
+                    for _f in _fechas_con_resultado:
+                        _ids_f = _partidos_jugados_por_fecha[_f]
+                        _total_f = len(_ids_f)
+                        _aciertos_f = sum(
+                            1 for _pid in _ids_f if _pron_j.get(_pid) not in (None, 0)
+                        )
+                        _clase = "tp-buena" if _aciertos_f == _total_f and _total_f > 0 else (
+                            "tp-mala" if _aciertos_f == 0 else ""
+                        )
+                        _chips_html.append(
+                            f'<span class="tp-acierto-chip {_clase}">F{_f}: {_aciertos_f}/{_total_f}</span>'
+                        )
+                    if _chips_html:
+                        st.markdown(
+                            f'<div class="tp-aciertos-wrap">{"".join(_chips_html)}</div>',
+                            unsafe_allow_html=True,
+                        )
                     else:
                         st.caption("✅ Aciertos por fecha: todavía no hay resultados cargados.")
 
                     st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
 
                     # ── Estado de pago (marcar manual, ej. pagó en efectivo) ──
+                    if j.get("mp_payment_id"):
+                        st.caption(
+                            f"ID de pago en MP: `{j['mp_payment_id']}`"
+                            + ("" if _pago_ok else " — pago anterior, ya usado: no vuelve a habilitar al jugador")
+                        )
+                        if st.button(
+                            "🔍 Ver detalle de este pago en Mercado Pago",
+                            key=f"detalle_pago_{j['id']}",
+                        ):
+                            _mostrar_detalle_pago(j["mp_payment_id"], j["id"])
                     if _pago_ok:
                         st.success("💰 Inscripción pagada")
-                        if j.get("mp_payment_id"):
-                            st.caption(f"ID de pago en MP: `{j['mp_payment_id']}`")
                         if st.button("↩️ Marcar como NO pagada", key=f"despagar_{j['id']}"):
                             sb.table("jugadores").update({"pagado": False}).eq("id", j["id"]).execute()
                             st.session_state[_exp_jugador_key] = True
