@@ -66,11 +66,13 @@ una tabla chica de configuración de la app. Si no existe, correr:
 """
 import base64
 import hashlib
+import html as _html
 import json
 import os
 import secrets
 import string
 import urllib.parse
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -80,7 +82,7 @@ from zoneinfo import ZoneInfo
 import streamlit as st
 import streamlit.components.v1 as components
 import mercadopago
-from PIL import Image  # ya es dependencia de Streamlit, no hace falta instalar nada nuevo
+from PIL import Image, ImageOps  # ya es dependencia de Streamlit, no hace falta instalar nada nuevo
 from database import conectar
 from escudos_map import url_escudo
 
@@ -508,6 +510,105 @@ st.markdown(
     .tp-acierto-chip.tp-buena { background: rgba(74,222,128,0.13); color: #4ade80; border-color: rgba(74,222,128,0.25); }
     .tp-acierto-chip.tp-mala  { background: rgba(239,68,68,0.12);  color: #f87171; border-color: rgba(239,68,68,0.22); }
 
+    /* ═══════════ CARD DE PARTICIPANTE v2 (admin + jugador) ═══════════ */
+    .pc-card {
+        position: relative; overflow: hidden;
+        margin: 4px 0 16px 0; padding: 18px 20px; border-radius: 20px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.02) 100%);
+        border: 1px solid rgba(232,201,107,0.25);
+        backdrop-filter: blur(22px) saturate(180%);
+        -webkit-backdrop-filter: blur(22px) saturate(180%);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+        font-family: 'Inter', sans-serif;
+    }
+    .pc-card::before {
+        content: ""; position: absolute; inset: 0; pointer-events: none;
+        background: radial-gradient(circle at 0% 0%, rgba(232,201,107,0.16), transparent 55%);
+    }
+    .pc-card > * { position: relative; z-index: 1; }
+    .pc-head { display: flex; align-items: center; gap: 16px; }
+    .pc-avatar {
+        flex-shrink: 0; width: 78px; height: 78px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-family: 'Bebas Neue', sans-serif; font-size: 2rem; color: #0b0f19;
+        background: linear-gradient(135deg, #e8c96b 0%, #c9a54a 100%);
+        background-size: cover; background-position: center;
+        border: 2px solid rgba(232,201,107,0.6);
+        box-shadow: 0 0 0 4px rgba(232,201,107,0.12), 0 6px 18px rgba(232,201,107,0.30);
+    }
+    .pc-id { min-width: 0; flex: 1; }
+    .pc-saludo {
+        font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em;
+        text-transform: uppercase; color: #94a3b8; margin: 0 0 2px 0;
+    }
+    .pc-nombre {
+        font-family: 'Bebas Neue', sans-serif; font-size: 1.75rem; color: #f1f5f9;
+        letter-spacing: 0.5px; line-height: 1.05; margin: 0; overflow-wrap: anywhere;
+    }
+    .pc-user { font-size: 0.82rem; color: #e8c96b; margin: 2px 0 0 0; }
+    .pc-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    .pc-tag {
+        font-size: 0.7rem; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+        white-space: nowrap; background: rgba(148,163,184,0.14); color: #cbd5e1;
+        border: 1px solid rgba(148,163,184,0.25);
+    }
+    .pc-tag.pc-ok   { background: rgba(74,222,128,0.14); color: #4ade80; border-color: rgba(74,222,128,0.3); }
+    .pc-tag.pc-warn { background: rgba(232,201,107,0.14); color: #e8c96b; border-color: rgba(232,201,107,0.3); }
+    .pc-tag.pc-bad  { background: rgba(239,68,68,0.12); color: #f87171; border-color: rgba(239,68,68,0.25); }
+
+    .pc-rank {
+        flex-shrink: 0; min-width: 104px; text-align: center; padding: 10px 14px;
+        border-radius: 16px; background: rgba(232,201,107,0.10);
+        border: 1px solid rgba(232,201,107,0.32);
+    }
+    .pc-rank-pos {
+        font-family: 'Bebas Neue', sans-serif; font-size: 2.5rem; line-height: 1;
+        color: #e8c96b; letter-spacing: 1px; white-space: nowrap;
+    }
+    .pc-rank-sub { font-size: 0.68rem; color: #94a3b8; margin-top: 3px; line-height: 1.3; }
+    .pc-rank.pc-r1 { background: rgba(232,201,107,0.20); border-color: rgba(232,201,107,0.6); box-shadow: 0 0 22px rgba(232,201,107,0.25); }
+    .pc-rank.pc-r2 { background: rgba(203,213,225,0.12); border-color: rgba(203,213,225,0.4); }
+    .pc-rank.pc-r2 .pc-rank-pos { color: #e2e8f0; }
+    .pc-rank.pc-r3 { background: rgba(214,149,91,0.13); border-color: rgba(214,149,91,0.42); }
+    .pc-rank.pc-r3 .pc-rank-pos { color: #e0a56b; }
+    .pc-rank.pc-rank-off { background: rgba(148,163,184,0.08); border-color: rgba(148,163,184,0.2); }
+
+    .pc-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+    .pc-stat {
+        padding: 10px 12px; border-radius: 14px;
+        background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+    }
+    .pc-stat-val { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; line-height: 1; color: #f1f5f9; letter-spacing: 0.5px; }
+    .pc-stat.pc-gold { border-color: rgba(232,201,107,0.3); background: rgba(232,201,107,0.08); }
+    .pc-stat.pc-gold .pc-stat-val { color: #e8c96b; }
+    .pc-stat-lab { font-size: 0.68rem; color: #94a3b8; margin-top: 4px; }
+
+    .pc-sec { font-size: 0.74rem; font-weight: 600; color: #94a3b8; margin: 18px 0 2px 2px; }
+    .pc-zona {
+        margin-top: 10px; padding: 12px 14px; border-radius: 14px;
+        background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08);
+        border-left: 3px solid var(--zc, #e8c96b);
+    }
+    .pc-zona-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .pc-zona-nombre { font-family: 'Bebas Neue', sans-serif; font-size: 1.25rem; letter-spacing: 0.06em; color: var(--zc, #e8c96b); }
+    .pc-zona-res { font-size: 0.75rem; color: #94a3b8; }
+    .pc-zona-res b { color: #f1f5f9; }
+    .pc-bar { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.08); margin: 8px 0 10px 0; overflow: hidden; }
+    .pc-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--zc, #e8c96b); }
+    .pc-fechas { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pc-fchip {
+        font-size: 0.72rem; font-weight: 600; border-radius: 8px; padding: 4px 9px; white-space: nowrap;
+        background: rgba(232,201,107,0.10); color: #e8c96b; border: 1px solid rgba(232,201,107,0.2);
+    }
+    .pc-fchip.pc-f-full { background: rgba(74,222,128,0.13); color: #4ade80; border-color: rgba(74,222,128,0.25); }
+    .pc-fchip.pc-f-zero { background: rgba(239,68,68,0.12); color: #f87171; border-color: rgba(239,68,68,0.22); }
+    .pc-vacio { font-size: 0.76rem; color: #64748b; }
+    @media (max-width: 640px) {
+        .pc-head { flex-wrap: wrap; }
+        .pc-rank { margin-left: auto; }
+        .pc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
     /* ═══════════ TARJETA DE PERFIL — usuario + Alias/CBU (glass) ═══════════ */
     .tarjeta-perfil {
         position: relative;
@@ -666,6 +767,194 @@ def _hash_pwd(pwd: str) -> str:
 def _generar_password(largo: int = 8) -> str:
     chars = string.ascii_letters + string.digits
     return "".join(secrets.choice(chars) for _ in range(largo))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CARD DE PARTICIPANTE — foto, ranking y resumen por zona
+# Helpers compartidos entre el panel admin (pestaña Jugadores) y la tarjeta
+# que ve cada jugador al loguearse.
+# ══════════════════════════════════════════════════════════════════════════
+_COLORES_ZONA = {"A": "#e8c96b", "B": "#60a5fa", "Interzonal": "#c4a1ff"}
+_MEDALLAS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+
+def _traer_todo(tabla, columnas, orden="id"):
+    """Trae TODAS las filas de una tabla paginando de a tandas.
+
+    Supabase/PostgREST devuelve como máximo ~1000 filas por consulta. La tabla
+    `pronosticos` crece (jugadores × partidos), así que una consulta simple
+    corta los datos en silencio y el ranking sale con puntos de menos. Acá se
+    pide por páginas hasta que no vengan más filas."""
+    filas, desde = [], 0
+    for _ in range(100):  # tope de seguridad
+        lote = (
+            sb.table(tabla).select(columnas).order(orden)
+            .range(desde, desde + 999).execute().data or []
+        )
+        if not lote:
+            break
+        filas.extend(lote)
+        desde += len(lote)
+    return filas
+
+
+def _calcular_ranking(jugadores, filas_puntos):
+    """Ranking del prode.
+
+    - Puntos de cada jugador = suma de `pronosticos.puntos`
+      (1 por acertar el signo, 3 por el marcador exacto).
+    - Entran al ranking solo los jugadores con inscripción paga y activos
+      (mismo criterio que el pozo).
+    - Orden: más puntos primero. Si dos jugadores tienen los mismos puntos
+      comparten posición (1°, 2°, 2°, 4°...), no se desempata por nombre.
+    """
+    stats = {}
+    for r in filas_puntos:
+        pts = r.get("puntos")
+        if not pts:
+            continue
+        s = stats.setdefault(r.get("jugador_id"), {"puntos": 0, "exactos": 0, "signos": 0})
+        s["puntos"] += pts
+        if pts >= 3:
+            s["exactos"] += 1
+        else:
+            s["signos"] += 1
+
+    habilitados = [j for j in jugadores if j.get("pagado") and j.get("activo", True)]
+    habilitados.sort(
+        key=lambda j: (-stats.get(j["id"], {}).get("puntos", 0), (j.get("nombre") or "").lower())
+    )
+    posicion, pts_prev, pos_prev = {}, None, 0
+    for i, j in enumerate(habilitados, start=1):
+        p = stats.get(j["id"], {}).get("puntos", 0)
+        if p != pts_prev:
+            pos_prev, pts_prev = i, p
+        posicion[j["id"]] = pos_prev
+    por_pos = Counter(posicion.values())
+    lider = stats.get(habilitados[0]["id"], {}).get("puntos", 0) if habilitados else 0
+    return {
+        "stats": stats,
+        "posicion": posicion,
+        "empatados": {jid for jid, pos in posicion.items() if por_pos[pos] > 1},
+        "total": len(habilitados),
+        "lider_puntos": lider,
+    }
+
+
+@st.cache_data(ttl=15)
+def _ranking_global():
+    jugadores = _traer_todo("jugadores", "id, nombre, pagado, activo")
+    filas = _traer_todo("pronosticos", "jugador_id, partido_id, puntos")
+    return _calcular_ranking(jugadores, filas)
+
+
+def _procesar_foto_subida(archivo) -> str:
+    """Foto subida → JPEG cuadrado 320×320 en base64 (respeta la rotación del celular)."""
+    img = Image.open(archivo)
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    img = ImageOps.fit(img, (320, 320), Image.LANCZOS)
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=82, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _guardar_foto_jugador(jugador_id, foto_b64) -> bool:
+    """Guarda (o borra, con None) la foto y verifica con un SELECT fresco que
+    realmente quedó en la base (por si RLS descarta el UPDATE sin error)."""
+    sb.table("jugadores").update({"foto_base64": foto_b64}).eq("id", jugador_id).execute()
+    r = sb.table("jugadores").select("foto_base64").eq("id", jugador_id).execute().data
+    return bool(r) and ((r[0].get("foto_base64") or None) == (foto_b64 or None))
+
+
+def _resumen_zonas_html(pron_j, jugados_zf, zonas_orden):
+    """Aciertos del jugador por zona (A / B / Interzonal) y por fecha."""
+    bloques = ['<div class="pc-sec">Aciertos por zona y fecha</div>']
+    for zona in zonas_orden:
+        color = _COLORES_ZONA.get(zona, "#e8c96b")
+        titulo = "Interzonal" if zona == "Interzonal" else f"Zona {zona}"
+        fechas = jugados_zf.get(zona, {})
+        if not fechas:
+            bloques.append(
+                f'<div class="pc-zona" style="--zc:{color};"><div class="pc-zona-top">'
+                f'<span class="pc-zona-nombre">{_html.escape(str(titulo))}</span>'
+                f'<span class="pc-vacio">Todavía no hay resultados cargados</span></div></div>'
+            )
+            continue
+        tot_jug = tot_ac = tot_pts = 0
+        chips = []
+        for fecha in sorted(fechas, key=int):
+            ids = fechas[fecha]
+            ac = sum(1 for pid in ids if pron_j.get(pid) not in (None, 0))
+            pts = sum((pron_j.get(pid) or 0) for pid in ids)
+            tot_jug += len(ids)
+            tot_ac += ac
+            tot_pts += pts
+            clase = "pc-f-full" if ac == len(ids) else ("pc-f-zero" if ac == 0 else "")
+            chips.append(
+                f'<span class="pc-fchip {clase}" title="{pts} pts">F{fecha} · {ac}/{len(ids)}</span>'
+            )
+        pct = round(100 * tot_ac / tot_jug) if tot_jug else 0
+        bloques.append(
+            f'<div class="pc-zona" style="--zc:{color};"><div class="pc-zona-top">'
+            f'<span class="pc-zona-nombre">{_html.escape(str(titulo))}</span>'
+            f'<span class="pc-zona-res"><b>{tot_ac}/{tot_jug}</b> aciertos · <b>{tot_pts}</b> pts</span></div>'
+            f'<div class="pc-bar"><span style="width:{pct}%;"></span></div>'
+            f'<div class="pc-fechas">{"".join(chips)}</div></div>'
+        )
+    return "".join(bloques)
+
+
+def _card_participante_html(nombre, username, foto, rk, jid, saludo=None, tags_html="", zonas_html=""):
+    esc = _html.escape
+    nombre = nombre or ""
+    iniciales = "".join(p[0] for p in nombre.split()[:2]).upper() or "?"
+    if foto:
+        estilo = "background-image:url('data:image/jpeg;base64," + foto + "');"
+        avatar = '<div class="pc-avatar" style="' + estilo + '"></div>'
+    else:
+        avatar = f'<div class="pc-avatar">{esc(iniciales)}</div>'
+
+    pos = rk["posicion"].get(jid)
+    if pos:
+        sub = f"de {rk['total']}" + (" · empatado" if jid in rk["empatados"] else "")
+        clase_rank = f"pc-r{pos}" if pos <= 3 else ""
+        rank = (
+            f'<div class="pc-rank {clase_rank}">'
+            f'<div class="pc-rank-pos">{_MEDALLAS.get(pos, "")} {pos}°</div>'
+            f'<div class="pc-rank-sub">{sub}</div></div>'
+        )
+    else:
+        rank = '<div class="pc-rank pc-rank-off"><div class="pc-rank-sub">Fuera del<br>ranking</div></div>'
+
+    s = rk["stats"].get(jid, {})
+    pts = s.get("puntos", 0)
+    if pos == 1:
+        dif = "¡Líder!"
+    elif pos:
+        dif = f"-{max(rk['lider_puntos'] - pts, 0)}"
+    else:
+        dif = "—"
+    items = [
+        (pts, "Puntos", True),
+        (s.get("exactos", 0), "Marcador exacto (3 pts)", False),
+        (s.get("signos", 0), "Solo signo (1 pt)", False),
+        (dif, "Del líder", False),
+    ]
+    stats_html = '<div class="pc-stats">' + "".join(
+        f'<div class="pc-stat{" pc-gold" if oro else ""}"><div class="pc-stat-val">{v}</div>'
+        f'<div class="pc-stat-lab">{lab}</div></div>'
+        for v, lab, oro in items
+    ) + "</div>"
+
+    saludo_html = f'<p class="pc-saludo">{esc(saludo)}</p>' if saludo else ""
+    tags = f'<div class="pc-tags">{tags_html}</div>' if tags_html else ""
+    return (
+        '<div class="pc-card"><div class="pc-head">' + avatar
+        + '<div class="pc-id">' + saludo_html
+        + f'<p class="pc-nombre">{esc(nombre)}</p><p class="pc-user">@{esc(username or "")}</p>'
+        + tags + "</div>" + rank + "</div>" + stats_html + zonas_html + "</div>"
+    )
+
 
 
 @st.cache_data(ttl=10)
@@ -1227,16 +1516,29 @@ if not sesion_activa:
 # pestaña "Jugadores" para transferirle el premio a quien gane.
 # ══════════════════════════════════════════════════════════════════════════
 if st.session_state.jugador_id and not st.session_state.es_admin:
-    _perfil_db = (
-        sb.table("jugadores")
-        .select("nombre, username, alias_cbu, pagado")
-        .eq("id", st.session_state.jugador_id)
-        .execute()
-        .data
-    )
+    _foto_ok = True
+    try:
+        _perfil_db = (
+            sb.table("jugadores")
+            .select("nombre, username, alias_cbu, pagado, foto_base64")
+            .eq("id", st.session_state.jugador_id)
+            .execute()
+            .data
+        )
+    except Exception:
+        # Todavía no existe la columna foto_base64 (ver docstring): la tarjeta
+        # sigue funcionando con iniciales y se oculta la carga de foto.
+        _foto_ok = False
+        _perfil_db = (
+            sb.table("jugadores")
+            .select("nombre, username, alias_cbu, pagado")
+            .eq("id", st.session_state.jugador_id)
+            .execute()
+            .data
+        )
     _perfil = _perfil_db[0] if _perfil_db else {}
     _alias_actual = (_perfil.get("alias_cbu") or "").strip()
-    _iniciales = "".join(p[0] for p in _perfil.get("nombre", "?").split()[:2]).upper() or "?"
+    _foto_perfil = (_perfil.get("foto_base64") or "").strip() if _foto_ok else ""
 
     if _alias_actual:
         _chip_alias_html = '<div class="tp-premio-chip tp-premio-ok">✅ Alias/CBU cargado</div>'
@@ -1259,23 +1561,59 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
             f'Boleta {_mes_actual.upper()} · {_estado_mes}</div>'
         )
 
+    try:
+        _rk_perfil = _ranking_global()
+    except Exception:
+        _rk_perfil = {"stats": {}, "posicion": {}, "empatados": set(), "total": 0, "lider_puntos": 0}
+
     st.markdown(
-        f"""
-        <div class="tarjeta-perfil">
-            <div class="tp-avatar">{_iniciales}</div>
-            <div class="tp-texto">
-                <p class="tp-saludo">Sesión iniciada</p>
-                <p class="tp-nombre">{_perfil.get('nombre', st.session_state.jugador_nombre)}</p>
-                <p class="tp-username">@{_perfil.get('username', '')}</p>
-            </div>
-            <div class="tp-chips">
-                {_chip_alias_html}
-                {_chip_mes_html}
-            </div>
-        </div>
-        """,
+        _card_participante_html(
+            nombre=_perfil.get("nombre", st.session_state.jugador_nombre),
+            username=_perfil.get("username", ""),
+            foto=_foto_perfil,
+            rk=_rk_perfil,
+            jid=st.session_state.jugador_id,
+            saludo="Sesión iniciada",
+            tags_html=_chip_alias_html + _chip_mes_html,
+        ),
         unsafe_allow_html=True,
     )
+
+    if _foto_ok:
+        with st.expander(
+            "📷 Mi foto de perfil" if not _foto_perfil else "📷 Mi foto de perfil (tocá para cambiarla)",
+            expanded=False,
+        ):
+            st.caption(
+                "Se ve en tu tarjeta y también la ve el admin. Se recorta en cuadrado "
+                "automáticamente, así que elegí una foto donde se te vea bien la cara."
+            )
+            # El contador renueva la key del uploader después de guardar para
+            # que el próximo rerun no vuelva a procesar el mismo archivo.
+            _ctr_key = "foto_perfil_ctr"
+            _ctr = st.session_state.get(_ctr_key, 0)
+            _archivo_foto = st.file_uploader(
+                "Subí tu foto (JPG o PNG)",
+                type=["png", "jpg", "jpeg"],
+                key=f"foto_perfil_up_{_ctr}",
+            )
+            if _archivo_foto is not None:
+                try:
+                    _b64_nueva = _procesar_foto_subida(_archivo_foto)
+                    if _guardar_foto_jugador(st.session_state.jugador_id, _b64_nueva):
+                        st.session_state[_ctr_key] = _ctr + 1
+                        st.toast("Foto actualizada.", icon="📷")
+                        st.rerun()
+                    else:
+                        st.error("No se pudo guardar la foto. Probá de nuevo o avisale al admin.")
+                except Exception as e:
+                    st.error(f"No pudimos procesar esa imagen: {e}")
+            if _foto_perfil and st.button("🗑️ Quitar mi foto", key="foto_perfil_quitar"):
+                if _guardar_foto_jugador(st.session_state.jugador_id, None):
+                    st.toast("Foto eliminada.", icon="🗑️")
+                    st.rerun()
+                else:
+                    st.error("No se pudo quitar la foto. Probá de nuevo.")
 
     with st.expander(
         "💸 Alias / CBU para cobrar el premio" if not _alias_actual
@@ -1512,8 +1850,8 @@ def cargar_todos_los_puntos():
     participantes). Se invalida junto con el resto de `st.cache_data` cada
     vez que se cargan/resetean resultados.
     """
-    res = sb.table("pronosticos").select("jugador_id, partido_id, puntos").execute()
-    return res.data or []
+    # Paginado: una consulta simple se corta en ~1000 filas y el ranking quedaría incompleto.
+    return _traer_todo("pronosticos", "jugador_id, partido_id, puntos")
 
 
 def cargar_pronosticos_de(j_id):
@@ -2989,41 +3327,42 @@ def _tab_jugadores_fragment():
             _n_activos_pagos = sum(1 for j in jugadores if j.get("pagado") and j.get("activo", True))
             st.caption(f"🏆 Participantes habilitados para el pozo: **{_n_activos_pagos}** de {len(jugadores)} registrados")
 
-            # ── Cálculo único (no por jugador) de ranking y aciertos por fecha ──
+            # ── Cálculo único (no por jugador) de ranking y aciertos por zona/fecha ──
             # Todo esto se calcula UNA sola vez acá afuera del loop, en memoria,
             # a partir de datos ya cargados/cacheados, para que abrir cada card
             # sea instantáneo (nada de golpear la base de nuevo por jugador).
             try:
                 _todos_puntos = cargar_todos_los_puntos()
-            except Exception:
+            except Exception as e:
+                st.warning(f"No se pudieron cargar los puntos para el ranking: {e}")
                 _todos_puntos = []
 
-            _pron_por_jugador = {}  # jugador_id -> {partido_id: puntos}
-            _puntos_totales = {}    # jugador_id -> puntos acumulados
-            for _row in _todos_puntos:
-                _jid = _row.get("jugador_id")
-                _pid = _row.get("partido_id")
-                _pts = _row.get("puntos")
-                _pron_por_jugador.setdefault(_jid, {})[_pid] = _pts
-                if _pts:
-                    _puntos_totales[_jid] = _puntos_totales.get(_jid, 0) + _pts
-
-            # Ranking: solo cuentan los habilitados para el pozo (pagado y
-            # activo), igual criterio que ya usa el resto de la app.
-            _habilitados = [j for j in jugadores if j.get("pagado") and j.get("activo", True)]
-            _habilitados_ordenados = sorted(
-                _habilitados,
-                key=lambda j: (-_puntos_totales.get(j["id"], 0), j["nombre"]),
+            st.caption(
+                "📊 **Cómo se calcula el ranking:** puntos = suma de lo que ganó en cada partido "
+                "(1 por acertar el signo, 3 por el marcador exacto). Solo entran jugadores con "
+                "inscripción paga y activos. Si dos tienen los mismos puntos comparten posición "
+                "(1°, 2°, 2°, 4°…)."
             )
-            _posicion_por_jugador = {j["id"]: i + 1 for i, j in enumerate(_habilitados_ordenados)}
-            _total_habilitados = len(_habilitados_ordenados)
 
-            # Partidos ya jugados, agrupados por Fecha (todas las zonas juntas)
-            _partidos_jugados_por_fecha = {}
-            for _p in partidos_db:
-                if _p.get("goles_local") is not None and _p.get("goles_visitante") is not None:
-                    _partidos_jugados_por_fecha.setdefault(_p["fecha_numero"], []).append(_p["id"])
-            _fechas_con_resultado = sorted(_partidos_jugados_por_fecha.keys(), key=int)
+            _rk = _calcular_ranking(jugadores, _todos_puntos)
+
+            _pron_por_jugador = {}  # jugador_id -> {partido_id: puntos}
+            for _row in _todos_puntos:
+                _pron_por_jugador.setdefault(_row.get("jugador_id"), {})[_row.get("partido_id")] = _row.get("puntos")
+
+            # Partidos ya jugados por ZONA y por Fecha. Antes se agrupaba solo por
+            # número de fecha mezclando zonas; ahora cada zona (A, B, Interzonal)
+            # tiene su propio resumen.
+            _por_zona_adm, _zonas_orden_adm = agrupar_por_zona_fecha(partidos_db)
+            _jugados_zf = {}  # zona -> fecha -> [partido_id jugados]
+            for _z in _zonas_orden_adm:
+                for _f in sorted(_por_zona_adm[_z].keys(), key=int):
+                    _ids = [
+                        p["id"] for p in _por_zona_adm[_z][_f]
+                        if p.get("goles_local") is not None and p.get("goles_visitante") is not None
+                    ]
+                    if _ids:
+                        _jugados_zf.setdefault(_z, {})[_f] = _ids
 
             for j in jugadores:
                 _pago_ok = j.get("pagado")
@@ -3044,110 +3383,61 @@ def _tab_jugadores_fragment():
                     key=_exp_jugador_key,
                 ):
 
-                    # ── Foto/avatar + posición en el ranking + aciertos por fecha ──
-                    col_foto, col_rank = st.columns([1, 2])
+                    # ── Card: foto + posición en el ranking + stats + resumen por zona ──
+                    _foto_actual = (j.get("foto_base64") or "").strip() if _foto_col_disponible else ""
+                    if not _esta_activo:
+                        _tags_adm = '<span class="pc-tag">⏸️ Pausado</span>'
+                    elif _pago_ok:
+                        _tags_adm = '<span class="pc-tag pc-ok">💰 Inscripción paga</span>'
+                    else:
+                        _tags_adm = '<span class="pc-tag pc-bad">🔴 Sin pagar</span>'
+                    if (j.get("alias_cbu") or "").strip():
+                        _tags_adm += '<span class="pc-tag pc-ok">💸 Alias/CBU cargado</span>'
+                    else:
+                        _tags_adm += '<span class="pc-tag pc-warn">💸 Sin Alias/CBU</span>'
 
-                    with col_foto:
-                        _foto_actual = (j.get("foto_base64") or "").strip() if _foto_col_disponible else ""
-                        _iniciales_j = "".join(p[0] for p in j["nombre"].split()[:2]).upper() or "?"
-                        if _foto_actual:
-                            st.markdown(
-                                f'<div class="tp-avatar-admin" '
-                                f'style="background-image:url(\'data:image/jpeg;base64,{_foto_actual}\');">'
-                                f"</div>",
-                                unsafe_allow_html=True,
-                            )
-                        else:
-                            st.markdown(
-                                f'<div class="tp-avatar-admin">{_iniciales_j}</div>',
-                                unsafe_allow_html=True,
-                            )
+                    st.markdown(
+                        _card_participante_html(
+                            nombre=j["nombre"],
+                            username=j.get("username", "—"),
+                            foto=_foto_actual,
+                            rk=_rk,
+                            jid=j["id"],
+                            tags_html=_tags_adm,
+                            zonas_html=_resumen_zonas_html(
+                                _pron_por_jugador.get(j["id"], {}), _jugados_zf, _zonas_orden_adm
+                            ),
+                        ),
+                        unsafe_allow_html=True,
+                    )
 
-                        if _foto_col_disponible:
-                            # Contador para renovar la key del uploader después de
-                            # guardar: si no, en el próximo rerun seguiría viendo el
-                            # mismo archivo ya subido y lo volvería a guardar en bucle.
-                            _foto_ctr_key = f"foto_up_ctr_{j['id']}"
-                            _foto_ctr = st.session_state.get(_foto_ctr_key, 0)
-                            _foto_nueva = st.file_uploader(
-                                "📷 Cargar foto",
-                                type=["png", "jpg", "jpeg"],
-                                key=f"foto_up_{j['id']}_{_foto_ctr}",
-                                label_visibility="collapsed",
-                            )
-                            if _foto_nueva is not None:
-                                try:
-                                    _img = Image.open(_foto_nueva).convert("RGB")
-                                    _img.thumbnail((320, 320))
-                                    _buf = BytesIO()
-                                    _img.save(_buf, format="JPEG", quality=82)
-                                    _foto_b64_nueva = base64.b64encode(_buf.getvalue()).decode("utf-8")
-                                    sb.table("jugadores").update(
-                                        {"foto_base64": _foto_b64_nueva}
-                                    ).eq("id", j["id"]).execute()
-                                    st.cache_data.clear()
+                    if _foto_col_disponible:
+                        # Contador para renovar la key del uploader después de
+                        # guardar: si no, en el próximo rerun seguiría viendo el
+                        # mismo archivo ya subido y lo volvería a guardar en bucle.
+                        _foto_ctr_key = f"foto_up_ctr_{j['id']}"
+                        _foto_ctr = st.session_state.get(_foto_ctr_key, 0)
+                        _foto_nueva = st.file_uploader(
+                            "📷 Foto de perfil (la ve el jugador en su tarjeta)",
+                            type=["png", "jpg", "jpeg"],
+                            key=f"foto_up_{j['id']}_{_foto_ctr}",
+                        )
+                        if _foto_nueva is not None:
+                            try:
+                                if _guardar_foto_jugador(j["id"], _procesar_foto_subida(_foto_nueva)):
                                     st.session_state[_foto_ctr_key] = _foto_ctr + 1
                                     st.toast(f"Foto de {j['nombre']} actualizada.", icon="📷")
                                     st.session_state[_exp_jugador_key] = True
                                     st.rerun(scope="fragment")
-                                except Exception as e:
-                                    st.error(f"No se pudo guardar la foto: {e}")
-                            if _foto_actual:
-                                if st.button("🗑️ Quitar foto", key=f"foto_del_{j['id']}", use_container_width=True):
-                                    sb.table("jugadores").update({"foto_base64": None}).eq("id", j["id"]).execute()
-                                    st.cache_data.clear()
-                                    st.session_state[_exp_jugador_key] = True
-                                    st.rerun(scope="fragment")
-
-                    with col_rank:
-                        _pos_j = _posicion_por_jugador.get(j["id"])
-                        _pts_j = _puntos_totales.get(j["id"], 0)
-                        if _pos_j:
-                            st.markdown(
-                                f"""
-                                <div class="tp-rank-box">
-                                    <div class="tp-rank-num">#{_pos_j} <span style="font-size:1.1rem;color:#94a3b8;">/ {_total_habilitados}</span></div>
-                                    <div class="tp-rank-label">Posición actual en el ranking</div>
-                                    <div class="tp-rank-pts">🏅 {_pts_j} puntos acumulados</div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-                        else:
-                            st.markdown(
-                                f"""
-                                <div class="tp-rank-box">
-                                    <div class="tp-rank-label" style="font-size:0.82rem;">
-                                        No cuenta para el ranking actual<br>(inscripción no pagada o participación pausada)
-                                    </div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True,
-                            )
-
-                    # ── Resumen de aciertos por fecha (mismos datos que cada
-                    # expander "Fecha X" de la boleta, resumidos acá mismo) ──
-                    _pron_j = _pron_por_jugador.get(j["id"], {})
-                    _chips_html = []
-                    for _f in _fechas_con_resultado:
-                        _ids_f = _partidos_jugados_por_fecha[_f]
-                        _total_f = len(_ids_f)
-                        _aciertos_f = sum(
-                            1 for _pid in _ids_f if _pron_j.get(_pid) not in (None, 0)
-                        )
-                        _clase = "tp-buena" if _aciertos_f == _total_f and _total_f > 0 else (
-                            "tp-mala" if _aciertos_f == 0 else ""
-                        )
-                        _chips_html.append(
-                            f'<span class="tp-acierto-chip {_clase}">F{_f}: {_aciertos_f}/{_total_f}</span>'
-                        )
-                    if _chips_html:
-                        st.markdown(
-                            f'<div class="tp-aciertos-wrap">{"".join(_chips_html)}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.caption("✅ Aciertos por fecha: todavía no hay resultados cargados.")
+                                else:
+                                    st.error("⚠️ La foto no quedó guardada en la base. Revisar RLS (policy de UPDATE).")
+                            except Exception as e:
+                                st.error(f"No se pudo guardar la foto: {e}")
+                        if _foto_actual:
+                            if st.button("🗑️ Quitar foto", key=f"foto_del_{j['id']}"):
+                                _guardar_foto_jugador(j["id"], None)
+                                st.session_state[_exp_jugador_key] = True
+                                st.rerun(scope="fragment")
 
                     st.markdown("<hr style='opacity:0.08;margin:10px 0;'>", unsafe_allow_html=True)
 
