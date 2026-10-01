@@ -71,6 +71,7 @@ import json
 import os
 import secrets
 import string
+import unicodedata
 import urllib.parse
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeoutError
@@ -603,6 +604,46 @@ st.markdown(
     .pc-fchip.pc-f-full { background: rgba(74,222,128,0.13); color: #4ade80; border-color: rgba(74,222,128,0.25); }
     .pc-fchip.pc-f-zero { background: rgba(239,68,68,0.12); color: #f87171; border-color: rgba(239,68,68,0.22); }
     .pc-vacio { font-size: 0.76rem; color: #64748b; }
+
+    .pc-mes {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+        margin-top: 16px; padding: 9px 14px; border-radius: 12px;
+        background: linear-gradient(90deg, rgba(232,201,107,0.16) 0%, rgba(232,201,107,0.03) 100%);
+        border: 1px solid rgba(232,201,107,0.28);
+    }
+    .pc-mes-nombre { font-family: 'Bebas Neue', sans-serif; font-size: 1.2rem; letter-spacing: 0.08em; color: #e8c96b; }
+    .pc-mes-nota { font-size: 0.72rem; color: #94a3b8; }
+
+    /* Foto: ícono de subir al lado del círculo (en vez de un uploader con botón) */
+    [class*="st-key-cardbox_"] { position: relative; }
+    [class*="st-key-fotoup_"] {
+        position: absolute !important; left: 72px; top: 74px; width: 34px !important; z-index: 6;
+    }
+    [class*="st-key-fotoup_"] [data-testid="stFileUploader"] > label,
+    [class*="st-key-fotoup_"] [data-testid="stFileUploaderDropzoneInstructions"],
+    [class*="st-key-fotoup_"] [data-testid="stFileUploaderFile"],
+    [class*="st-key-fotoup_"] [data-testid="stFileUploaderFileList"] { display: none !important; }
+    [class*="st-key-fotoup_"] [data-testid="stFileUploaderDropzone"] {
+        padding: 0 !important; min-height: 0 !important; background: transparent !important; border: 0 !important;
+        width: 34px; height: 34px;
+    }
+    [class*="st-key-fotoup_"] button {
+        width: 34px !important; height: 34px !important; min-height: 0 !important; padding: 0 !important;
+        border-radius: 50% !important; font-size: 0 !important; color: transparent !important;
+        background-color: #e8c96b !important; border: 3px solid #0b0f19 !important;
+        background-repeat: no-repeat !important; background-position: center !important; background-size: 16px !important;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230b0f19' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M12 16V4M7 9l5-5 5 5M4 20h16'/></svg>") !important;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.45) !important; cursor: pointer;
+    }
+    [class*="st-key-fotoup_"] button * { font-size: 0 !important; }
+    [class*="st-key-fotoup_"] button:hover { background-color: #f3d98a !important; }
+    [class*="st-key-fotodel_"] { position: absolute !important; left: 84px; top: 14px; width: 24px !important; z-index: 6; }
+    [class*="st-key-fotodel_"] button {
+        width: 24px !important; height: 24px !important; min-height: 0 !important; padding: 0 !important;
+        border-radius: 50% !important; background: rgba(15,23,42,0.92) !important;
+        border: 1px solid rgba(248,113,113,0.5) !important;
+    }
+    [class*="st-key-fotodel_"] button p { font-size: 11px !important; line-height: 1 !important; margin: 0 !important; color: #f87171 !important; }
     @media (max-width: 640px) {
         .pc-head { flex-wrap: wrap; }
         .pc-rank { margin-left: auto; }
@@ -798,18 +839,51 @@ def _traer_todo(tabla, columnas, orden="id"):
     return filas
 
 
-def _calcular_ranking(jugadores, filas_puntos):
-    """Ranking del prode.
+def _norm_mes(s) -> str:
+    s = unicodedata.normalize("NFD", str(s or ""))
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return " ".join(s.lower().split())
 
-    - Puntos de cada jugador = suma de `pronosticos.puntos`
-      (1 por acertar el signo, 3 por el marcador exacto).
-    - Entran al ranking solo los jugadores con inscripción paga y activos
-      (mismo criterio que el pozo).
-    - Orden: más puntos primero. Si dos jugadores tienen los mismos puntos
-      comparten posición (1°, 2°, 2°, 4°...), no se desempata por nombre.
+
+@st.cache_data(ttl=30)
+def _fechas_del_mes(mes_label):
+    """Números de Fecha asignados a un mes en la pestaña 'Meses' del admin
+    (tabla `fecha_mes_map`), el mismo origen que usa el ranking mensual.
+    Compara sin importar mayúsculas ni tildes, y acepta tanto "Octubre 2026"
+    como solo "Octubre"."""
+    try:
+        filas = sb.table("fecha_mes_map").select("fecha_numero, mes").execute().data or []
+    except Exception:
+        return []
+    objetivos = {_norm_mes(mes_label), _norm_mes(str(mes_label).split()[0] if mes_label else "")}
+    return sorted({
+        int(r["fecha_numero"]) for r in filas
+        if r.get("fecha_numero") is not None and _norm_mes(r.get("mes")) in objetivos
+    })
+
+
+def _ids_partidos_de_fechas(partidos, fechas):
+    fechas = set(fechas)
+    return {
+        p["id"] for p in partidos
+        if p.get("fecha_numero") is not None and int(p["fecha_numero"]) in fechas
+    }
+
+
+def _calcular_ranking(jugadores, filas_puntos, partido_ids=None):
+    """Ranking del prode (del MES si se pasa `partido_ids`).
+
+    - Puntos de cada jugador = suma de `pronosticos.puntos` de los partidos
+      incluidos (1 por acertar el signo, 3 por el marcador exacto).
+    - Si `partido_ids` no es None, solo cuentan esos partidos (los de las
+      fechas asignadas al mes actual).
+    - Entran solo jugadores con inscripción paga y activos (como el pozo).
+    - Orden: más puntos primero. Mismos puntos = misma posición (1°, 2°, 2°, 4°).
     """
     stats = {}
     for r in filas_puntos:
+        if partido_ids is not None and r.get("partido_id") not in partido_ids:
+            continue
         pts = r.get("puntos")
         if not pts:
             continue
@@ -830,22 +904,26 @@ def _calcular_ranking(jugadores, filas_puntos):
         if p != pts_prev:
             pos_prev, pts_prev = i, p
         posicion[j["id"]] = pos_prev
-    por_pos = Counter(posicion.values())
     lider = stats.get(habilitados[0]["id"], {}).get("puntos", 0) if habilitados else 0
     return {
         "stats": stats,
         "posicion": posicion,
-        "empatados": {jid for jid, pos in posicion.items() if por_pos[pos] > 1},
         "total": len(habilitados),
         "lider_puntos": lider,
     }
 
 
 @st.cache_data(ttl=15)
-def _ranking_global():
+def _ranking_mes(mes_label):
+    """Ranking del mes indicado (ej. "Octubre 2026") para la tarjeta del jugador."""
     jugadores = _traer_todo("jugadores", "id, nombre, pagado, activo")
     filas = _traer_todo("pronosticos", "jugador_id, partido_id, puntos")
-    return _calcular_ranking(jugadores, filas)
+    partidos = _traer_todo("partidos", "id, fecha_numero")
+    fechas = _fechas_del_mes(mes_label)
+    rk = _calcular_ranking(jugadores, filas, _ids_partidos_de_fechas(partidos, fechas))
+    rk["mes"] = mes_label
+    rk["sin_fechas"] = not fechas
+    return rk
 
 
 def _procesar_foto_subida(archivo) -> str:
@@ -866,9 +944,10 @@ def _guardar_foto_jugador(jugador_id, foto_b64) -> bool:
     return bool(r) and ((r[0].get("foto_base64") or None) == (foto_b64 or None))
 
 
-def _resumen_zonas_html(pron_j, jugados_zf, zonas_orden):
+def _resumen_zonas_html(pron_j, jugados_zf, zonas_orden, mes_label=""):
     """Aciertos del jugador por zona (A / B / Interzonal) y por fecha."""
-    bloques = ['<div class="pc-sec">Aciertos por zona y fecha</div>']
+    _sufijo = f" de {_html.escape(str(mes_label))}" if mes_label else ""
+    bloques = [f'<div class="pc-sec">Aciertos por zona y fecha{_sufijo}</div>']
     for zona in zonas_orden:
         color = _COLORES_ZONA.get(zona, "#e8c96b")
         titulo = "Interzonal" if zona == "Interzonal" else f"Zona {zona}"
@@ -877,7 +956,7 @@ def _resumen_zonas_html(pron_j, jugados_zf, zonas_orden):
             bloques.append(
                 f'<div class="pc-zona" style="--zc:{color};"><div class="pc-zona-top">'
                 f'<span class="pc-zona-nombre">{_html.escape(str(titulo))}</span>'
-                f'<span class="pc-vacio">Todavía no hay resultados cargados</span></div></div>'
+                f'<span class="pc-vacio">Sin resultados de este mes todavía</span></div></div>'
             )
             continue
         tot_jug = tot_ac = tot_pts = 0
@@ -914,28 +993,37 @@ def _card_participante_html(nombre, username, foto, rk, jid, saludo=None, tags_h
     else:
         avatar = f'<div class="pc-avatar">{esc(iniciales)}</div>'
 
+    mes = esc((rk.get("mes") or "").upper())
+    sin_fechas = bool(rk.get("sin_fechas"))
+    sin_puntos = not rk.get("lider_puntos")
     pos = rk["posicion"].get(jid)
-    if pos:
-        sub = f"de {rk['total']}" + (" · empatado" if jid in rk["empatados"] else "")
+
+    if pos and not sin_fechas and not sin_puntos:
         clase_rank = f"pc-r{pos}" if pos <= 3 else ""
         rank = (
             f'<div class="pc-rank {clase_rank}">'
             f'<div class="pc-rank-pos">{_MEDALLAS.get(pos, "")} {pos}°</div>'
-            f'<div class="pc-rank-sub">{sub}</div></div>'
+            f'<div class="pc-rank-sub">de {rk["total"]}</div></div>'
         )
     else:
-        rank = '<div class="pc-rank pc-rank-off"><div class="pc-rank-sub">Fuera del<br>ranking</div></div>'
+        if not pos:
+            msg = "Fuera del<br>ranking"
+        elif sin_fechas:
+            msg = "Sin fechas<br>asignadas"
+        else:
+            msg = "Sin puntos<br>todavía"
+        rank = f'<div class="pc-rank pc-rank-off"><div class="pc-rank-sub">{msg}</div></div>'
 
     s = rk["stats"].get(jid, {})
     pts = s.get("puntos", 0)
-    if pos == 1:
-        dif = "¡Líder!"
-    elif pos:
-        dif = f"-{max(rk['lider_puntos'] - pts, 0)}"
-    else:
+    if not pos or sin_puntos:
         dif = "—"
+    elif pos == 1:
+        dif = "¡Líder!"
+    else:
+        dif = f"-{max(rk['lider_puntos'] - pts, 0)}"
     items = [
-        (pts, "Puntos", True),
+        (pts, "Puntos del mes", True),
         (s.get("exactos", 0), "Marcador exacto (3 pts)", False),
         (s.get("signos", 0), "Solo signo (1 pt)", False),
         (dif, "Del líder", False),
@@ -946,15 +1034,20 @@ def _card_participante_html(nombre, username, foto, rk, jid, saludo=None, tags_h
         for v, lab, oro in items
     ) + "</div>"
 
+    nota_mes = "Todavía no hay fechas asignadas a este mes" if sin_fechas else "Ranking y puntos del mes"
+    banner = (
+        f'<div class="pc-mes"><span class="pc-mes-nombre">📅 {mes}</span>'
+        f'<span class="pc-mes-nota">{nota_mes}</span></div>'
+    )
+
     saludo_html = f'<p class="pc-saludo">{esc(saludo)}</p>' if saludo else ""
     tags = f'<div class="pc-tags">{tags_html}</div>' if tags_html else ""
     return (
         '<div class="pc-card"><div class="pc-head">' + avatar
         + '<div class="pc-id">' + saludo_html
         + f'<p class="pc-nombre">{esc(nombre)}</p><p class="pc-user">@{esc(username or "")}</p>'
-        + tags + "</div>" + rank + "</div>" + stats_html + zonas_html + "</div>"
+        + tags + "</div>" + rank + "</div>" + banner + stats_html + zonas_html + "</div>"
     )
-
 
 
 @st.cache_data(ttl=10)
@@ -1561,46 +1654,44 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
             f'Boleta {_mes_actual.upper()} · {_estado_mes}</div>'
         )
 
+    _mes_lbl_perfil = _mes_actual_boleta()[1]
     try:
-        _rk_perfil = _ranking_global()
+        _rk_perfil = _ranking_mes(_mes_lbl_perfil)
     except Exception:
-        _rk_perfil = {"stats": {}, "posicion": {}, "empatados": set(), "total": 0, "lider_puntos": 0}
+        _rk_perfil = {
+            "stats": {}, "posicion": {}, "total": 0, "lider_puntos": 0,
+            "mes": _mes_lbl_perfil, "sin_fechas": True,
+        }
 
-    st.markdown(
-        _card_participante_html(
-            nombre=_perfil.get("nombre", st.session_state.jugador_nombre),
-            username=_perfil.get("username", ""),
-            foto=_foto_perfil,
-            rk=_rk_perfil,
-            jid=st.session_state.jugador_id,
-            saludo="Sesión iniciada",
-            tags_html=_chip_alias_html + _chip_mes_html,
-        ),
-        unsafe_allow_html=True,
-    )
-
-    if _foto_ok:
-        with st.expander(
-            "📷 Mi foto de perfil" if not _foto_perfil else "📷 Mi foto de perfil (tocá para cambiarla)",
-            expanded=False,
-        ):
-            st.caption(
-                "Se ve en tu tarjeta y también la ve el admin. Se recorta en cuadrado "
-                "automáticamente, así que elegí una foto donde se te vea bien la cara."
-            )
+    # El contenedor con key permite posicionar el ícono de subir foto justo
+    # al lado del círculo del avatar (ver CSS "st-key-cardbox_/fotoup_/fotodel_").
+    with st.container(key="cardbox_perfil"):
+        st.markdown(
+            _card_participante_html(
+                nombre=_perfil.get("nombre", st.session_state.jugador_nombre),
+                username=_perfil.get("username", ""),
+                foto=_foto_perfil,
+                rk=_rk_perfil,
+                jid=st.session_state.jugador_id,
+                saludo="Sesión iniciada",
+                tags_html=_chip_alias_html + _chip_mes_html,
+            ),
+            unsafe_allow_html=True,
+        )
+        if _foto_ok:
             # El contador renueva la key del uploader después de guardar para
             # que el próximo rerun no vuelva a procesar el mismo archivo.
             _ctr_key = "foto_perfil_ctr"
             _ctr = st.session_state.get(_ctr_key, 0)
             _archivo_foto = st.file_uploader(
-                "Subí tu foto (JPG o PNG)",
+                "Cambiar mi foto",
                 type=["png", "jpg", "jpeg"],
-                key=f"foto_perfil_up_{_ctr}",
+                key=f"fotoup_perfil_{_ctr}",
+                label_visibility="collapsed",
             )
             if _archivo_foto is not None:
                 try:
-                    _b64_nueva = _procesar_foto_subida(_archivo_foto)
-                    if _guardar_foto_jugador(st.session_state.jugador_id, _b64_nueva):
+                    if _guardar_foto_jugador(st.session_state.jugador_id, _procesar_foto_subida(_archivo_foto)):
                         st.session_state[_ctr_key] = _ctr + 1
                         st.toast("Foto actualizada.", icon="📷")
                         st.rerun()
@@ -1608,7 +1699,7 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
                         st.error("No se pudo guardar la foto. Probá de nuevo o avisale al admin.")
                 except Exception as e:
                     st.error(f"No pudimos procesar esa imagen: {e}")
-            if _foto_perfil and st.button("🗑️ Quitar mi foto", key="foto_perfil_quitar"):
+            if _foto_perfil and st.button("✕", key="fotodel_perfil", help="Quitar mi foto"):
                 if _guardar_foto_jugador(st.session_state.jugador_id, None):
                     st.toast("Foto eliminada.", icon="🗑️")
                     st.rerun()
@@ -3337,14 +3428,24 @@ def _tab_jugadores_fragment():
                 st.warning(f"No se pudieron cargar los puntos para el ranking: {e}")
                 _todos_puntos = []
 
-            st.caption(
-                "📊 **Cómo se calcula el ranking:** puntos = suma de lo que ganó en cada partido "
-                "(1 por acertar el signo, 3 por el marcador exacto). Solo entran jugadores con "
-                "inscripción paga y activos. Si dos tienen los mismos puntos comparten posición "
-                "(1°, 2°, 2°, 4°…)."
-            )
+            _mes_lbl_adm = _mes_actual_boleta()[1]
+            _fechas_mes = set(_fechas_del_mes(_mes_lbl_adm))
 
-            _rk = _calcular_ranking(jugadores, _todos_puntos)
+            st.caption(
+                f"📊 **Datos de {_mes_lbl_adm.upper()}** (no del ranking general). Puntos = suma de lo "
+                "ganado en cada partido de las fechas asignadas a este mes en la pestaña «Meses» "
+                "(1 por acertar el signo, 3 por el marcador exacto). Solo entran jugadores con "
+                "inscripción paga y activos. Mismos puntos = misma posición (1°, 2°, 2°, 4°…)."
+            )
+            if not _fechas_mes:
+                st.warning(
+                    f"No hay fechas asignadas a {_mes_lbl_adm} en la pestaña «Meses (Ranking)». "
+                    "Asignalas ahí para que las cards muestren datos del mes."
+                )
+
+            _rk = _calcular_ranking(jugadores, _todos_puntos, _ids_partidos_de_fechas(partidos_db, _fechas_mes))
+            _rk["mes"] = _mes_lbl_adm
+            _rk["sin_fechas"] = not _fechas_mes
 
             _pron_por_jugador = {}  # jugador_id -> {partido_id: puntos}
             for _row in _todos_puntos:
@@ -3357,6 +3458,8 @@ def _tab_jugadores_fragment():
             _jugados_zf = {}  # zona -> fecha -> [partido_id jugados]
             for _z in _zonas_orden_adm:
                 for _f in sorted(_por_zona_adm[_z].keys(), key=int):
+                    if int(_f) not in _fechas_mes:
+                        continue
                     _ids = [
                         p["id"] for p in _por_zona_adm[_z][_f]
                         if p.get("goles_local") is not None and p.get("goles_visitante") is not None
@@ -3383,7 +3486,7 @@ def _tab_jugadores_fragment():
                     key=_exp_jugador_key,
                 ):
 
-                    # ── Card: foto + posición en el ranking + stats + resumen por zona ──
+                    # ── Card del MES: foto + posición + stats + resumen por zona ──
                     _foto_actual = (j.get("foto_base64") or "").strip() if _foto_col_disponible else ""
                     if not _esta_activo:
                         _tags_adm = '<span class="pc-tag">⏸️ Pausado</span>'
@@ -3396,45 +3499,47 @@ def _tab_jugadores_fragment():
                     else:
                         _tags_adm += '<span class="pc-tag pc-warn">💸 Sin Alias/CBU</span>'
 
-                    st.markdown(
-                        _card_participante_html(
-                            nombre=j["nombre"],
-                            username=j.get("username", "—"),
-                            foto=_foto_actual,
-                            rk=_rk,
-                            jid=j["id"],
-                            tags_html=_tags_adm,
-                            zonas_html=_resumen_zonas_html(
-                                _pron_por_jugador.get(j["id"], {}), _jugados_zf, _zonas_orden_adm
+                    # Contenedor con key: permite pegar el ícono de subir foto
+                    # al lado del círculo del avatar (CSS "st-key-cardbox_/fotoup_/fotodel_").
+                    with st.container(key=f"cardbox_{j['id']}"):
+                        st.markdown(
+                            _card_participante_html(
+                                nombre=j["nombre"],
+                                username=j.get("username", "—"),
+                                foto=_foto_actual,
+                                rk=_rk,
+                                jid=j["id"],
+                                tags_html=_tags_adm,
+                                zonas_html=_resumen_zonas_html(
+                                    _pron_por_jugador.get(j["id"], {}), _jugados_zf, _zonas_orden_adm, _mes_lbl_adm
+                                ),
                             ),
-                        ),
-                        unsafe_allow_html=True,
-                    )
-
-                    if _foto_col_disponible:
-                        # Contador para renovar la key del uploader después de
-                        # guardar: si no, en el próximo rerun seguiría viendo el
-                        # mismo archivo ya subido y lo volvería a guardar en bucle.
-                        _foto_ctr_key = f"foto_up_ctr_{j['id']}"
-                        _foto_ctr = st.session_state.get(_foto_ctr_key, 0)
-                        _foto_nueva = st.file_uploader(
-                            "📷 Foto de perfil (la ve el jugador en su tarjeta)",
-                            type=["png", "jpg", "jpeg"],
-                            key=f"foto_up_{j['id']}_{_foto_ctr}",
+                            unsafe_allow_html=True,
                         )
-                        if _foto_nueva is not None:
-                            try:
-                                if _guardar_foto_jugador(j["id"], _procesar_foto_subida(_foto_nueva)):
-                                    st.session_state[_foto_ctr_key] = _foto_ctr + 1
-                                    st.toast(f"Foto de {j['nombre']} actualizada.", icon="📷")
-                                    st.session_state[_exp_jugador_key] = True
-                                    st.rerun(scope="fragment")
-                                else:
-                                    st.error("⚠️ La foto no quedó guardada en la base. Revisar RLS (policy de UPDATE).")
-                            except Exception as e:
-                                st.error(f"No se pudo guardar la foto: {e}")
-                        if _foto_actual:
-                            if st.button("🗑️ Quitar foto", key=f"foto_del_{j['id']}"):
+
+                        if _foto_col_disponible:
+                            # Contador para renovar la key del uploader después de
+                            # guardar y no re-procesar el mismo archivo en bucle.
+                            _foto_ctr_key = f"foto_up_ctr_{j['id']}"
+                            _foto_ctr = st.session_state.get(_foto_ctr_key, 0)
+                            _foto_nueva = st.file_uploader(
+                                "Cambiar foto",
+                                type=["png", "jpg", "jpeg"],
+                                key=f"fotoup_{j['id']}_{_foto_ctr}",
+                                label_visibility="collapsed",
+                            )
+                            if _foto_nueva is not None:
+                                try:
+                                    if _guardar_foto_jugador(j["id"], _procesar_foto_subida(_foto_nueva)):
+                                        st.session_state[_foto_ctr_key] = _foto_ctr + 1
+                                        st.toast(f"Foto de {j['nombre']} actualizada.", icon="📷")
+                                        st.session_state[_exp_jugador_key] = True
+                                        st.rerun(scope="fragment")
+                                    else:
+                                        st.error("⚠️ La foto no quedó guardada en la base. Revisar RLS (policy de UPDATE).")
+                                except Exception as e:
+                                    st.error(f"No se pudo guardar la foto: {e}")
+                            if _foto_actual and st.button("✕", key=f"fotodel_{j['id']}", help="Quitar foto"):
                                 _guardar_foto_jugador(j["id"], None)
                                 st.session_state[_exp_jugador_key] = True
                                 st.rerun(scope="fragment")
