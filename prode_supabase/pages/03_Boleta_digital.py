@@ -1257,19 +1257,31 @@ _WA_ICONO_URI = "data:image/svg+xml;base64," + base64.b64encode(_WA_ICONO_SVG.en
 _WA_MAX_URL_CHARS = 6000
 
 
-def _fecha_vigente(fechas_de_zona: dict):
-    """Devuelve la fecha (jornada) \"en juego\" de una zona: la primera que
-    todavía tiene algún partido sin resultado cargado. Si ya se jugaron
-    todas, devuelve la última. `fechas_de_zona` es {fecha_numero: [partidos]}.
+def _fechas_a_compartir(pron, por_zona):
+    """Devuelve el conjunto de números de Fecha (jornada) que se comparten por
+    WhatsApp. Es UNO SOLO para las tres zonas (Zona A, Zona B e Interzonal),
+    no uno por zona: así el partido Interzonal de la fecha entra siempre
+    junto con los de A y B, aunque ya se haya jugado o su zona tenga otra
+    fecha \"en juego\" distinta.
+
+    Son las fechas donde el jugador tiene al menos un pronóstico sobre un
+    partido todavía sin resultado (incluye los partidos ya jugados de esas
+    mismas fechas, para que el listado siga completo durante la jornada). Si
+    no tiene ninguno pendiente, se usa la última fecha en la que pronosticó.
     """
-    fechas = sorted(fechas_de_zona.keys(), key=int)
-    for f in fechas:
-        if any(
-            p.get("goles_local") is None or p.get("goles_visitante") is None
-            for p in fechas_de_zona[f]
-        ):
-            return f
-    return fechas[-1] if fechas else None
+    pendientes, con_pron = set(), set()
+    for fechas_de_zona in por_zona.values():
+        for fecha, partidos in fechas_de_zona.items():
+            for p in partidos:
+                pr = pron.get(p["id"])
+                if not pr or pr.get("signo_pred") is None:
+                    continue
+                con_pron.add(int(fecha))
+                if p.get("goles_local") is None or p.get("goles_visitante") is None:
+                    pendientes.add(int(fecha))
+    if pendientes:
+        return pendientes
+    return {max(con_pron)} if con_pron else set()
 
 
 def _texto_whatsapp_pronosticos(nombre, pron, por_zona, zonas_orden):
@@ -1288,33 +1300,36 @@ def _texto_whatsapp_pronosticos(nombre, pron, por_zona, zonas_orden):
     ]
 
     bloques = []  # [(titulo, [linea, ...])]
-    for zona in zonas_orden:
-        fecha = _fecha_vigente(por_zona.get(zona, {}))
-        if fecha is None:
-            continue
-        partidos = sorted(
-            por_zona[zona][fecha],
-            key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
-        )
-        lineas = []
-        for p in partidos:
-            pr = pron.get(p["id"])
-            if not pr or pr.get("signo_pred") is None:
+    fechas_sel = _fechas_a_compartir(pron, por_zona)
+    for fecha_n in sorted(fechas_sel):
+        for zona in zonas_orden:
+            fechas_de_zona = por_zona.get(zona, {})
+            clave = next((f for f in fechas_de_zona if int(f) == fecha_n), None)
+            if clave is None:
                 continue
-            local, visitante = p["equipo_local"], p["equipo_visitante"]
-            if pr.get("sin_marcador"):
-                texto_signo = {
-                    "1": f"Gana {local}",
-                    "X": "Empate",
-                    "2": f"Gana {visitante}",
-                }.get(pr["signo_pred"], "—")
-                lineas.append(f"{local} vs {visitante} → *{texto_signo}*")
-            else:
-                gl, gv = pr.get("goles_local_pred"), pr.get("goles_visitante_pred")
-                lineas.append(f"{local} *{gl} - {gv}* {visitante}")
-        if lineas:
-            titulo = f"*{etiqueta_zona(zona)} · Fecha {fecha}* ({len(lineas)}/{len(partidos)} cargados)"
-            bloques.append((titulo, lineas))
+            partidos = sorted(
+                fechas_de_zona[clave],
+                key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
+            )
+            lineas = []
+            for p in partidos:
+                pr = pron.get(p["id"])
+                if not pr or pr.get("signo_pred") is None:
+                    continue
+                local, visitante = p["equipo_local"], p["equipo_visitante"]
+                if pr.get("sin_marcador"):
+                    texto_signo = {
+                        "1": f"Gana {local}",
+                        "X": "Empate",
+                        "2": f"Gana {visitante}",
+                    }.get(pr["signo_pred"], "—")
+                    lineas.append(f"{local} vs {visitante} → *{texto_signo}*")
+                else:
+                    gl, gv = pr.get("goles_local_pred"), pr.get("goles_visitante_pred")
+                    lineas.append(f"{local} *{gl} - {gv}* {visitante}")
+            if lineas:
+                titulo = f"*{etiqueta_zona(zona)} · Fecha {clave}* ({len(lineas)}/{len(partidos)} cargados)"
+                bloques.append((titulo, lineas))
 
     def _armar(bloques_):
         partes = list(cabecera)
