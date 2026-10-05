@@ -8,6 +8,8 @@ Cambios:
   - Admin puede eliminar participantes con confirmación
   - Admin puede resetear (borrar) la lista completa de participantes
   - Resultado se guarda como goles y se refleja en 01_Resultados.py
+  - Botón flotante redondo de WhatsApp (solo jugadores logueados): envía/comparte
+    por WhatsApp el listado detallado de los pronósticos cargados hasta el momento
 
 IMPORTANTE: la tabla `pronosticos` en Supabase necesita las columnas
 `goles_local_pred` (int, nullable) y `goles_visitante_pred` (int, nullable)
@@ -1185,6 +1187,149 @@ def _badge_signo(signo):
     if signo == "2":
         return '<span class="badge-2">2 · VISIT.</span>'
     return '<span class="badge-sin">Sin pronóstico</span>'
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BOTÓN FLOTANTE DE WHATSAPP — enviarse / compartir los pronósticos
+# ══════════════════════════════════════════════════════════════════════════
+# Ícono oficial de WhatsApp (blanco) embebido como data-URI: así no depende
+# de ningún recurso externo ni de que Streamlit deje pasar un <svg> inline.
+_WA_ICONO_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#ffffff" '
+    'd="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.3-.15-1.263-.465-2.403-1.485-.888-.795-1.484-1.77-1.66-2.07-.174-.3-.019-.465.13-.615.136-.135.301-.345.451-.52.146-.181.194-.301.297-.496.1-.21.049-.375-.025-.524-.075-.15-.672-1.62-.922-2.206-.24-.584-.487-.51-.672-.51-.172-.015-.371-.015-.571-.015-.2 0-.523.074-.797.359-.273.3-1.045 1.02-1.045 2.475s1.07 2.865 1.219 3.075c.149.18 2.095 3.195 5.076 4.483.709.3 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.696.248-1.289.173-1.414-.074-.127-.272-.202-.57-.347'
+    'm-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884'
+    'm8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>'
+)
+_WA_ICONO_URI = "data:image/svg+xml;base64," + base64.b64encode(_WA_ICONO_SVG.encode("utf-8")).decode("ascii")
+
+# Largo máximo (ya url-encodeado) del link de WhatsApp. Los links wa.me con
+# texto prearmado funcionan bien hasta varios miles de caracteres; con los
+# ~15 pronósticos de una fecha el mensaje queda MUY por debajo de este tope,
+# que existe solo como red de seguridad.
+_WA_MAX_URL_CHARS = 6000
+
+
+def _fecha_vigente(fechas_de_zona: dict):
+    """Devuelve la fecha (jornada) \"en juego\" de una zona: la primera que
+    todavía tiene algún partido sin resultado cargado. Si ya se jugaron
+    todas, devuelve la última. `fechas_de_zona` es {fecha_numero: [partidos]}.
+    """
+    fechas = sorted(fechas_de_zona.keys(), key=int)
+    for f in fechas:
+        if any(
+            p.get("goles_local") is None or p.get("goles_visitante") is None
+            for p in fechas_de_zona[f]
+        ):
+            return f
+    return fechas[-1] if fechas else None
+
+
+def _texto_whatsapp_pronosticos(nombre, pron, por_zona, zonas_orden):
+    """Arma el mensaje (con formato de WhatsApp: *negrita*) con el listado
+    detallado de los pronósticos que el jugador tiene cargados AHORA en la
+    fecha vigente de cada zona (Zona A / Zona B / Interzonal).
+
+    Si el pronóstico se cargó eligiendo solo 1/X/2 (sin_marcador), se muestra
+    el signo; si se cargó marcador exacto, se muestra el marcador.
+    """
+    ahora = datetime.now(TZ_ARG).strftime("%d/%m/%Y %H:%M")
+    cabecera = [
+        "🏆 *Mi boleta · Prode Liga Profesional*",
+        f"👤 {nombre}",
+        f"🕒 Enviada el {ahora} hs",
+    ]
+
+    bloques = []  # [(titulo, [linea, ...])]
+    for zona in zonas_orden:
+        fecha = _fecha_vigente(por_zona.get(zona, {}))
+        if fecha is None:
+            continue
+        partidos = sorted(
+            por_zona[zona][fecha],
+            key=lambda p: (p.get("fecha_partido") or "9999-99-99", p.get("hora") or "99:99"),
+        )
+        lineas = []
+        for p in partidos:
+            pr = pron.get(p["id"])
+            if not pr or pr.get("signo_pred") is None:
+                continue
+            local, visitante = p["equipo_local"], p["equipo_visitante"]
+            if pr.get("sin_marcador"):
+                texto_signo = {
+                    "1": f"Gana {local}",
+                    "X": "Empate",
+                    "2": f"Gana {visitante}",
+                }.get(pr["signo_pred"], "—")
+                lineas.append(f"{local} vs {visitante} → *{texto_signo}*")
+            else:
+                gl, gv = pr.get("goles_local_pred"), pr.get("goles_visitante_pred")
+                lineas.append(f"{local} *{gl} - {gv}* {visitante}")
+        if lineas:
+            titulo = f"*{etiqueta_zona(zona)} · Fecha {fecha}* ({len(lineas)}/{len(partidos)} cargados)"
+            bloques.append((titulo, lineas))
+
+    def _armar(bloques_):
+        partes = list(cabecera)
+        n = 0
+        for titulo, lineas in bloques_:
+            partes.append("")
+            partes.append(titulo)
+            for ln in lineas:
+                n += 1
+                partes.append(f"{n}. {ln}")
+        if n == 0:
+            partes += ["", "Todavía no cargué ningún pronóstico 😅"]
+        else:
+            partes += ["", f"✅ Total: {n} pronósticos cargados"]
+        return "\n".join(partes), n
+
+    texto, _ = _armar(bloques)
+
+    # Red de seguridad por largo: si por algún motivo el mensaje no entra en
+    # el link, se recortan las últimas líneas (en la práctica no pasa).
+    while len(urllib.parse.quote(texto, safe="")) > _WA_MAX_URL_CHARS and bloques:
+        titulo, lineas = bloques[-1]
+        if len(lineas) > 1:
+            bloques[-1] = (titulo, lineas[:-1])
+        else:
+            bloques.pop()
+        texto, _ = _armar(bloques)
+    return texto
+
+
+def _boton_whatsapp_flotante(nombre, pron, por_zona, zonas_orden):
+    """Dibuja el ícono redondo y flotante de WhatsApp (abajo a la derecha).
+
+    Al tocarlo abre WhatsApp con el listado de pronósticos ya escrito, para
+    que el jugador elija a quién mandarlo (incluido su propio chat, "Tú"/
+    "Mensajes guardados") o lo comparta. Se usa un link `wa.me` normal, que
+    funciona igual en celular (abre la app) y en computadora (WhatsApp Web).
+    """
+    texto = _texto_whatsapp_pronosticos(nombre, pron, por_zona, zonas_orden)
+    url = "https://wa.me/?text=" + urllib.parse.quote(texto, safe="")
+    # OJO: sin líneas en blanco ni sangría dentro de este HTML, para que el
+    # parser de Markdown de Streamlit no lo interprete como bloque de código.
+    html_boton = (
+        "<style>"
+        ".wa-float{position:fixed;right:18px;bottom:calc(22px + env(safe-area-inset-bottom,0px));"
+        "width:60px;height:60px;border-radius:50%;background-color:#25D366;"
+        f"background-image:url('{_WA_ICONO_URI}');background-repeat:no-repeat;"
+        "background-position:center;background-size:34px 34px;"
+        "box-shadow:0 6px 18px rgba(0,0,0,.4);z-index:999990;display:block;"
+        "text-decoration:none;border:0;transition:transform .15s ease,box-shadow .15s ease;"
+        "animation:wa-pulso 2.6s ease-out infinite;}"
+        ".wa-float:hover{transform:scale(1.08);box-shadow:0 8px 22px rgba(0,0,0,.5);}"
+        ".wa-float:active{transform:scale(.95);}"
+        "@keyframes wa-pulso{0%{box-shadow:0 6px 18px rgba(0,0,0,.4),0 0 0 0 rgba(37,211,102,.55);}"
+        "70%{box-shadow:0 6px 18px rgba(0,0,0,.4),0 0 0 16px rgba(37,211,102,0);}"
+        "100%{box-shadow:0 6px 18px rgba(0,0,0,.4),0 0 0 0 rgba(37,211,102,0);}}"
+        "@media (prefers-reduced-motion:reduce){.wa-float{animation:none;}}"
+        "</style>"
+        f'<a class="wa-float" href="{_html.escape(url, quote=True)}" target="_blank" '
+        'rel="noopener noreferrer" title="Enviar mis pronósticos por WhatsApp" '
+        'aria-label="Enviar mis pronósticos por WhatsApp"></a>'
+    )
+    st.markdown(html_boton, unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -2760,6 +2905,13 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                     )
 
                         st.markdown("<hr style='opacity:0.08;margin:8px 0;'>", unsafe_allow_html=True)
+
+    # ── Botón flotante de WhatsApp (solo en la boleta propia del jugador) ──
+    # Va al FINAL del fragmento a propósito: así, cada vez que el jugador
+    # guarda o cambia un pronóstico (que re-ejecuta este fragmento), el link
+    # se vuelve a armar con el listado actualizado, y nunca queda desfasado.
+    if editable and not st.session_state.es_admin and key_ns == "propia":
+        _boton_whatsapp_flotante(jugador_objetivo_nombre, pron, por_zona, zonas_orden)
 
 
 # ══════════════════════════════════════════════════════════════════════════
