@@ -985,6 +985,54 @@ def _resumen_zonas_html(pron_j, jugados_zf, zonas_orden, mes_label=""):
     return "".join(bloques)
 
 
+@st.cache_data(ttl=15)
+def _zonas_html_perfil(jugador_id, mes_label):
+    """Mismo resumen de aciertos por Zona A / Zona B / Interzonal y por fecha
+    que ve el admin en la card de cada participante, pero para UN jugador (el
+    que está logueado). Se arma con `_resumen_zonas_html`, así que se ve y
+    cuenta exactamente igual: solo partidos YA JUGADOS de las fechas asignadas
+    al mes en curso.
+
+    Está autocontenido (consulta sus propios datos) porque la card del perfil
+    se dibuja más arriba en el archivo que `cargar_partidos` y
+    `agrupar_por_zona_fecha`, que todavía no están definidas en ese punto.
+    """
+    fechas_mes = set(_fechas_del_mes(mes_label))
+    partidos = _traer_todo("partidos", "id, zona, fecha_numero, goles_local, goles_visitante")
+    filas = (
+        sb.table("pronosticos")
+        .select("partido_id, puntos")
+        .eq("jugador_id", jugador_id)
+        .execute()
+        .data
+        or []
+    )
+    pron_j = {r.get("partido_id"): r.get("puntos") for r in filas}
+
+    por_zona = {}
+    for p in partidos:
+        if p.get("zona") is None or p.get("fecha_numero") is None:
+            continue
+        por_zona.setdefault(p["zona"], {}).setdefault(p["fecha_numero"], []).append(p)
+    zonas_orden = sorted(
+        por_zona.keys(), key=lambda z: (0 if z == "A" else 1 if z == "B" else 2, z)
+    )
+
+    jugados_zf = {}  # zona -> fecha -> [partido_id jugados]
+    for z in zonas_orden:
+        for f in sorted(por_zona[z].keys(), key=int):
+            if int(f) not in fechas_mes:
+                continue
+            ids = [
+                p["id"] for p in por_zona[z][f]
+                if p.get("goles_local") is not None and p.get("goles_visitante") is not None
+            ]
+            if ids:
+                jugados_zf.setdefault(z, {})[f] = ids
+
+    return _resumen_zonas_html(pron_j, jugados_zf, zonas_orden, mes_label)
+
+
 def _card_participante_html(nombre, username, foto, rk, jid, saludo=None, tags_html="", zonas_html=""):
     esc = _html.escape
     nombre = nombre or ""
@@ -1311,7 +1359,7 @@ def _boton_whatsapp_flotante(nombre, pron, por_zona, zonas_orden):
     # parser de Markdown de Streamlit no lo interprete como bloque de código.
     html_boton = (
         "<style>"
-        ".wa-float{position:fixed;right:18px;bottom:calc(22px + env(safe-area-inset-bottom,0px));"
+        ".wa-float{position:fixed;right:18px;bottom:calc(120px + env(safe-area-inset-bottom,0px));"
         "width:60px;height:60px;border-radius:50%;background-color:#25D366;"
         f"background-image:url('{_WA_ICONO_URI}');background-repeat:no-repeat;"
         "background-position:center;background-size:34px 34px;"
@@ -1808,6 +1856,13 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
             "mes": _mes_lbl_perfil, "sin_fechas": True,
         }
 
+    # Resumen de aciertos por Zona A / Zona B / Interzonal (igual que la card
+    # del admin). Si algo falla, la card se muestra igual, sin el resumen.
+    try:
+        _zonas_html_perfil_seguro = _zonas_html_perfil(st.session_state.jugador_id, _mes_lbl_perfil)
+    except Exception:
+        _zonas_html_perfil_seguro = ""
+
     # El contenedor con key permite posicionar el ícono de subir foto justo
     # al lado del círculo del avatar (ver CSS "st-key-cardbox_/fotoup_/fotodel_").
     with st.container(key="cardbox_perfil"):
@@ -1820,6 +1875,7 @@ if st.session_state.jugador_id and not st.session_state.es_admin:
                 jid=st.session_state.jugador_id,
                 saludo="Sesión iniciada",
                 tags_html=_chip_alias_html + _chip_mes_html,
+                zonas_html=_zonas_html_perfil_seguro,
             ),
             unsafe_allow_html=True,
         )
