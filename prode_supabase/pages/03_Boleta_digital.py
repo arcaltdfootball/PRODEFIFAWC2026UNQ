@@ -817,8 +817,676 @@ def _generar_password(largo: int = 8) -> str:
 # Helpers compartidos entre el panel admin (pestaña Jugadores) y la tarjeta
 # que ve cada jugador al loguearse.
 # ══════════════════════════════════════════════════════════════════════════
-_COLORES_ZONA = {"A": "#e8c96b", "B": "#60a5fa", "Interzonal": "#c4a1ff"}
+_COLORES_ZONA = {"A": "#e8c96b", "B": "#60a5fa", "Interzonal": "#c4a1ff", "Playoffs": "#fb923c"}
 _MEDALLAS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PLAYOFFS — octavos → cuartos → semifinales → final, todo automático
+# ══════════════════════════════════════════════════════════════════════════
+# Reglas (reglamento LPF 2026, mismo cuadro que se usó en el Apertura 2026):
+#   • Fase regular = fechas 1 a 16 (zonas + interzonales). Cada zona tiene su
+#     tabla (3 pts victoria / 1 empate / 0 derrota). Los interzonales también
+#     suman para el equipo en la tabla de SU zona. Desempate: diferencia de gol
+#     y goles a favor.
+#   • Clasifican los 8 primeros de cada zona. Todo es a PARTIDO ÚNICO; si hay
+#     empate, tiempo suplementario y penales.
+#   • Octavos (el primero nombrado es el local = el mejor ubicado):
+#       O1: 1°A-8°B   O2: 1°B-8°A   O3: 2°A-7°B   O4: 2°B-7°A
+#       O5: 3°A-6°B   O6: 3°B-6°A   O7: 4°A-5°B   O8: 4°B-5°A
+#   • Cuartos:  C1 = ganador O1 vs ganador O8 · C2 = O2 vs O7 · C3 = O3 vs O6 · C4 = O4 vs O5
+#   • Semis:    S1 = ganador C1 vs ganador C4 · S2 = ganador C2 vs ganador C3
+#   • Final:    ganador S1 vs ganador S2 (en cancha neutral; el "local" es el
+#               mejor ubicado de la fase regular)
+# Cómo se guarda: cada partido es una fila de `partidos` con zona "Playoffs" y
+# fecha_numero 17 (octavos), 18 (cuartos), 19 (semis) y 20 (final). Así la
+# boleta, el cierre por horario, los puntos y el export a WhatsApp funcionan
+# igual que en las otras pestañas. Cada ronda se crea SOLA cuando se conocen los
+# dos equipos (a medida que el admin carga los resultados). Si un partido
+# termina empatado, el que avanza se define con `penales_local` /
+# `penales_visitante` (columnas de `partidos`; el admin los carga en Resultados).
+import time as _time
+
+ZONA_PLAYOFFS = "Playoffs"
+ULTIMA_FECHA_REGULAR = 16   # la fase regular termina con la fecha 16
+FECHA_OCTAVOS, FECHA_CUARTOS, FECHA_SEMIS, FECHA_FINAL = 17, 18, 19, 20
+_RONDAS_PLAYOFFS = (FECHA_OCTAVOS, FECHA_CUARTOS, FECHA_SEMIS, FECHA_FINAL)
+CLASIFICAN_POR_ZONA = 8
+INTERZONAL_CUENTA_EN_TABLA = True
+_NOMBRES_RONDAS_PLAYOFFS = {
+    FECHA_OCTAVOS: "Octavos de final", FECHA_CUARTOS: "Cuartos de final",
+    FECHA_SEMIS: "Semifinales", FECHA_FINAL: "Final",
+}
+_CUARTOS_PLAYOFFS = {"C1": ("O1", "O8"), "C2": ("O2", "O7"), "C3": ("O3", "O6"), "C4": ("O4", "O5")}
+_SEMIS_PLAYOFFS = {"S1": ("C1", "C4"), "S2": ("C2", "C3")}
+_FINAL_PLAYOFFS = {"F": ("S1", "S2")}
+_NOMBRES_LLAVES = {
+    **{f"O{i}": f"Octavo {i}" for i in range(1, 9)},
+    **{f"C{i}": f"Cuarto {i}" for i in range(1, 5)},
+    "S1": "Semifinal 1", "S2": "Semifinal 2", "F": "Final",
+}
+
+
+def _titulo_zona(z):
+    """Nombre visible de una zona: "Zona A", "Zona B", "Interzonal", "Playoffs"."""
+    return z if z in ("Interzonal", ZONA_PLAYOFFS) else f"Zona {z}"
+
+
+def etiqueta_fecha(zona, fecha):
+    """"Fecha 5" para las zonas; "Octavos de final", "Cuartos de final"… para Playoffs."""
+    if zona == ZONA_PLAYOFFS:
+        try:
+            return _NOMBRES_RONDAS_PLAYOFFS.get(int(fecha), f"Playoffs · Ronda {fecha}")
+        except (TypeError, ValueError):
+            return f"Playoffs · Ronda {fecha}"
+    return f"Fecha {fecha}"
+
+
+def _norm_equipo(s):
+    """Nombre de equipo sin tildes, mayúsculas ni signos (para cruzar nombres
+    entre los partidos de zona y los interzonales)."""
+    s = unicodedata.normalize("NFD", str(s or "").lower())
+    return "".join(c for c in s if c.isascii() and c.isalnum())
+
+
+def _tiene_resultado(p):
+    return p.get("goles_local") is not None and p.get("goles_visitante") is not None
+
+
+def _entero(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _partidos_fase_regular(partidos):
+    zonas = ("A", "B", "Interzonal") if INTERZONAL_CUENTA_EN_TABLA else ("A", "B")
+    regulares = []
+    for p in partidos:
+        if p.get("zona") not in zonas:
+            continue
+        f = _entero(p.get("fecha_numero"))
+        if f is not None and f <= ULTIMA_FECHA_REGULAR:
+            regulares.append(p)
+    return regulares
+
+
+def estado_fase_regular(partidos):
+    """Cuántos partidos de la fase regular ya tienen resultado. `completa` es
+    True cuando existe la fecha 16 en el fixture y TODOS los partidos de la
+    fase regular (zonas + interzonales) tienen su resultado cargado."""
+    regulares = _partidos_fase_regular(partidos)
+    jugados = sum(1 for p in regulares if _tiene_resultado(p))
+    hay_ultima = any(_entero(p["fecha_numero"]) == ULTIMA_FECHA_REGULAR for p in regulares)
+    return {
+        "total": len(regulares),
+        "jugados": jugados,
+        "faltan": len(regulares) - jugados,
+        "completa": bool(regulares) and hay_ultima and jugados == len(regulares),
+    }
+
+
+def calcular_tablas_zonas(partidos):
+    """Tabla de posiciones de la Zona A y de la Zona B con los resultados de la
+    fase regular. Devuelve ({"A": [filas], "B": [filas]}, equipos_sin_zona).
+
+    A qué zona pertenece cada equipo se deduce de los partidos de Zona A / Zona B
+    (los interzonales no lo dicen). Orden: puntos, diferencia de gol, goles a
+    favor y, como último recurso, orden alfabético."""
+    zona_de, nombre_de = {}, {}
+    for p in partidos:
+        if p.get("zona") in ("A", "B"):
+            for eq in (p.get("equipo_local"), p.get("equipo_visitante")):
+                if not eq:
+                    continue
+                k = _norm_equipo(eq)
+                zona_de.setdefault(k, p["zona"])
+                nombre_de.setdefault(k, eq)
+
+    filas = {
+        k: {"equipo": nombre_de[k], "zona": zona_de[k],
+            "pj": 0, "pg": 0, "pe": 0, "pp": 0, "gf": 0, "gc": 0}
+        for k in zona_de
+    }
+    sin_zona = set()
+    for p in _partidos_fase_regular(partidos):
+        if not _tiene_resultado(p):
+            continue
+        gl, gv = int(p["goles_local"]), int(p["goles_visitante"])
+        for eq, gf, gc in ((p["equipo_local"], gl, gv), (p["equipo_visitante"], gv, gl)):
+            f = filas.get(_norm_equipo(eq))
+            if f is None:
+                sin_zona.add(eq)
+                continue
+            f["pj"] += 1
+            f["gf"] += gf
+            f["gc"] += gc
+            if gf > gc:
+                f["pg"] += 1
+            elif gf == gc:
+                f["pe"] += 1
+            else:
+                f["pp"] += 1
+
+    tablas = {"A": [], "B": []}
+    for f in filas.values():
+        f["dg"] = f["gf"] - f["gc"]
+        f["pts"] = 3 * f["pg"] + f["pe"]
+        tablas[f["zona"]].append(f)
+    for z in tablas:
+        tablas[z].sort(key=lambda f: (-f["pts"], -f["dg"], -f["gf"], _norm_equipo(f["equipo"])))
+        for i, f in enumerate(tablas[z], start=1):
+            f["pos"] = i
+    return tablas, sorted(sin_zona)
+
+
+def armar_cruces_octavos(tablas):
+    """Los 8 cruces de octavos en el orden O1..O8: 1° de una zona vs 8° de la
+    otra, 2° vs 7°, 3° vs 6° y 4° vs 5° (en las dos direcciones). Local = el
+    mejor ubicado. Devuelve [] si alguna zona tiene menos de 8 equipos."""
+    n = CLASIFICAN_POR_ZONA
+    if len(tablas.get("A", [])) < n or len(tablas.get("B", [])) < n:
+        return []
+    cruces = []
+    for pos in range(1, n // 2 + 1):
+        rival = n + 1 - pos
+        for za, zb in (("A", "B"), ("B", "A")):
+            mejor, peor = tablas[za][pos - 1], tablas[zb][rival - 1]
+            cruces.append({
+                "llave": len(cruces) + 1,
+                "local": mejor["equipo"], "visitante": peor["equipo"],
+                "seed_local": f"{pos}° Zona {za}", "seed_visitante": f"{rival}° Zona {zb}",
+            })
+    return cruces
+
+
+def ganador_de(p):
+    """Equipo que avanza en un partido de Playoffs, o None si todavía no se sabe
+    (sin resultado, o empate sin penales cargados)."""
+    if p is None or not _tiene_resultado(p):
+        return None
+    gl, gv = int(p["goles_local"]), int(p["goles_visitante"])
+    if gl > gv:
+        return p["equipo_local"]
+    if gv > gl:
+        return p["equipo_visitante"]
+    pl, pv = _entero(p.get("penales_local")), _entero(p.get("penales_visitante"))
+    if pl is None or pv is None or pl == pv:
+        return None
+    return p["equipo_local"] if pl > pv else p["equipo_visitante"]
+
+
+def texto_penales(p):
+    """"pen. 4-3" si el partido terminó empatado y tiene penales cargados; si no, ""."""
+    if p and _tiene_resultado(p) and int(p["goles_local"]) == int(p["goles_visitante"]):
+        pl, pv = _entero(p.get("penales_local")), _entero(p.get("penales_visitante"))
+        if pl is not None and pv is not None:
+            return f"pen. {pl}-{pv}"
+    return ""
+
+
+def _info_equipos(tablas):
+    info = {}
+    for filas in tablas.values():
+        for f in filas:
+            info[_norm_equipo(f["equipo"])] = f
+    return info
+
+
+def _clave_localia(equipo, info):
+    """Orden de "mejor ubicado": posición en su zona; si dos equipos de zonas
+    distintas tienen la misma posición (solo puede pasar en la final), puntos,
+    diferencia de gol y goles a favor de la fase regular."""
+    f = info.get(_norm_equipo(equipo))
+    if f is None:
+        return (99, 0, 0, 0, _norm_equipo(equipo))
+    return (f["pos"], -f["pts"], -f["dg"], -f["gf"], _norm_equipo(equipo))
+
+
+def _orientar(e1, e2, info):
+    """(local, visitante): el mejor ubicado es local."""
+    a, b = sorted((e1, e2), key=lambda e: _clave_localia(e, info))
+    return a, b
+
+
+def _buscar_partido(rows, e1, e2):
+    par = {_norm_equipo(e1), _norm_equipo(e2)}
+    for p in rows:
+        if {_norm_equipo(p["equipo_local"]), _norm_equipo(p["equipo_visitante"])} == par:
+            return p
+    return None
+
+
+def _seed_txt(equipo, info):
+    f = info.get(_norm_equipo(equipo))
+    return f"{f['pos']}° Zona {f['zona']}" if f else ""
+
+
+def calcular_bracket(partidos, tablas=None):
+    """Cuadro completo de Playoffs: 15 llaves (O1..O8, C1..C4, S1, S2, F).
+
+    Cada llave es un dict con: codigo, nombre, ronda (fecha_numero), a / b (los
+    dos equipos, o None si falta definirlos), desc_a / desc_b (texto de relleno:
+    "Ganador O1", "1° Zona A"…), local / visitante (solo si ya están los dos
+    equipos), partido (fila de `partidos` o None), ganador, estado
+    ("sin_definir" | "por_jugar" | "penales" | "jugado") y proyectado (True en
+    octavos que todavía salen de la tabla provisoria).
+    Devuelve {"llaves": [...], "por_codigo": {...}, "campeon": str|None, "octavos_ok": bool}.
+    """
+    if tablas is None:
+        tablas, _ = calcular_tablas_zonas(partidos)
+    info = _info_equipos(tablas)
+    cruces = armar_cruces_octavos(tablas)
+
+    por_ronda = {f: [] for f in _RONDAS_PLAYOFFS}
+    for p in partidos:
+        if p.get("zona") != ZONA_PLAYOFFS:
+            continue
+        f = _entero(p.get("fecha_numero"))
+        if f in por_ronda:
+            por_ronda[f].append(p)
+    octavos = sorted(por_ronda[FECHA_OCTAVOS], key=lambda p: int(p["id"]))
+    octavos_ok = len(octavos) in (0, 8)
+
+    llaves, por_codigo = [], {}
+
+    def _agregar(codigo, ronda, a, b, desc_a, desc_b, partido, proyectado=False):
+        ganador = ganador_de(partido)
+        if partido is None:
+            estado = "sin_definir"
+        elif ganador is not None:
+            estado = "jugado"
+        elif _tiene_resultado(partido):
+            estado = "penales"      # empate sin penales cargados
+        else:
+            estado = "por_jugar"
+        local = visitante = None
+        if partido is not None:
+            local, visitante = partido["equipo_local"], partido["equipo_visitante"]
+        elif a and b:
+            local, visitante = _orientar(a, b, info)
+        slot = {
+            "codigo": codigo, "nombre": _NOMBRES_LLAVES[codigo], "ronda": ronda,
+            "a": a, "b": b, "desc_a": desc_a, "desc_b": desc_b,
+            "local": local, "visitante": visitante,
+            "partido": partido, "ganador": ganador, "estado": estado, "proyectado": proyectado,
+        }
+        llaves.append(slot)
+        por_codigo[codigo] = slot
+
+    # Octavos: de las filas reales o, si todavía no existen, de la tabla provisoria.
+    for i in range(1, 9):
+        fila = octavos[i - 1] if len(octavos) == 8 else None
+        cr = cruces[i - 1] if len(cruces) >= i else None
+        if fila is not None:
+            a, b = fila["equipo_local"], fila["equipo_visitante"]
+            _agregar(f"O{i}", FECHA_OCTAVOS, a, b, _seed_txt(a, info), _seed_txt(b, info), fila)
+        elif cr is not None:
+            _agregar(f"O{i}", FECHA_OCTAVOS, cr["local"], cr["visitante"],
+                     cr["seed_local"], cr["seed_visitante"], None, proyectado=True)
+        else:
+            _agregar(f"O{i}", FECHA_OCTAVOS, None, None, "A definir", "A definir", None)
+
+    # Cuartos, semis y final: salen de los ganadores de las llaves anteriores.
+    for definicion, ronda in ((_CUARTOS_PLAYOFFS, FECHA_CUARTOS), (_SEMIS_PLAYOFFS, FECHA_SEMIS),
+                              (_FINAL_PLAYOFFS, FECHA_FINAL)):
+        for codigo, (ref_a, ref_b) in definicion.items():
+            ga, gb = por_codigo[ref_a]["ganador"], por_codigo[ref_b]["ganador"]
+            fila = _buscar_partido(por_ronda[ronda], ga, gb) if (ga and gb) else None
+            _agregar(codigo, ronda, ga, gb, f"Ganador {ref_a}", f"Ganador {ref_b}", fila)
+
+    return {
+        "llaves": llaves, "por_codigo": por_codigo,
+        "campeon": por_codigo["F"]["ganador"], "octavos_ok": octavos_ok,
+    }
+
+
+def siguientes_partidos(partidos, tablas=None):
+    """Partidos (cuartos, semis, final) que ya se pueden crear porque se
+    conocen sus dos equipos y todavía no existen en `partidos`."""
+    bracket = calcular_bracket(partidos, tablas)
+    hay_octavos = any(s["partido"] is not None for s in bracket["llaves"] if s["ronda"] == FECHA_OCTAVOS)
+    if not bracket["octavos_ok"] or not hay_octavos:
+        return []
+    return [
+        {"codigo": s["codigo"], "fecha_numero": s["ronda"], "zona": ZONA_PLAYOFFS,
+         "equipo_local": s["local"], "equipo_visitante": s["visitante"]}
+        for s in bracket["llaves"]
+        if s["ronda"] != FECHA_OCTAVOS and s["partido"] is None and s["local"] and s["visitante"]
+    ]
+
+
+def penales_pendientes(partidos):
+    """Partidos de Playoffs que terminaron empatados y todavía no tienen los
+    penales cargados (el cuadro no puede avanzar hasta que se carguen)."""
+    return [
+        p for p in partidos
+        if p.get("zona") == ZONA_PLAYOFFS and _tiene_resultado(p) and ganador_de(p) is None
+    ]
+
+
+def _insertar_partidos(filas_sin_id):
+    """Inserta filas en `partidos`. `id` no se genera solo en la tabla: se toma
+    el último + 1. Las demás columnas (torneo, estado, etc.) usan su valor por
+    defecto; día y hora quedan "a confirmar" hasta que el admin los cargue."""
+    ultimo = sb.table("partidos").select("id").order("id", desc=True).limit(1).execute().data
+    base = int(ultimo[0]["id"]) if ultimo else 0
+    filas = [{"id": base + i, **f} for i, f in enumerate(filas_sin_id, start=1)]
+    resp = sb.table("partidos").insert(filas).execute()
+    if not (resp.data or []):
+        raise RuntimeError("No se guardaron los partidos (0 filas insertadas). Revisá RLS en 'partidos'.")
+    cargar_partidos.clear()
+    return len(filas)
+
+
+def generar_playoffs_en_base(partidos, forzar=False):
+    """Crea en `partidos` los 8 cruces de octavos con la tabla actual.
+    Devuelve (ok, mensaje). Nunca duplica: si ya hay partidos de Playoffs no hace nada.
+    `forzar=True` (solo admin) genera aunque falten resultados de la fase regular."""
+    if any(p.get("zona") == ZONA_PLAYOFFS for p in partidos):
+        return False, "Los Playoffs ya están cargados."
+    estado = estado_fase_regular(partidos)
+    if not estado["completa"] and not forzar:
+        return False, f"La fase regular todavía no terminó (faltan {estado['faltan']} partidos)."
+    tablas, sin_zona = calcular_tablas_zonas(partidos)
+    if sin_zona and not forzar:
+        return False, "No pude ubicar en una zona a: " + ", ".join(sin_zona) + "."
+    cruces = armar_cruces_octavos(tablas)
+    if not cruces:
+        return False, f"Cada zona necesita al menos {CLASIFICAN_POR_ZONA} equipos para armar los cruces."
+    # Chequeo fresco contra la base: otra sesión pudo haberlos creado recién.
+    if sb.table("partidos").select("id").eq("zona", ZONA_PLAYOFFS).limit(1).execute().data:
+        return False, "Los Playoffs ya están cargados."
+    n = _insertar_partidos([
+        {"fecha_numero": FECHA_OCTAVOS, "zona": ZONA_PLAYOFFS,
+         "equipo_local": c["local"], "equipo_visitante": c["visitante"]}
+        for c in cruces
+    ])
+    return True, f"Se crearon los {n} cruces de octavos de final."
+
+
+def avanzar_playoffs_en_base(partidos):
+    """Crea los partidos de la ronda siguiente cuando ya se conocen los dos
+    equipos (ganadores de las llaves anteriores). Devuelve (cantidad_creada, mensaje)."""
+    if not siguientes_partidos(partidos):
+        return 0, None
+    # Chequeo fresco: se vuelve a calcular con los Playoffs actuales de la base
+    # para no duplicar si otra sesión ya los creó.
+    frescos = sb.table("partidos").select("*").eq("zona", ZONA_PLAYOFFS).execute().data or []
+    actuales = [p for p in partidos if p.get("zona") != ZONA_PLAYOFFS] + frescos
+    nuevos = siguientes_partidos(actuales)
+    if not nuevos:
+        return 0, None
+    n = _insertar_partidos([{k: v for k, v in f.items() if k != "codigo"} for f in nuevos])
+    return n, "Se crearon: " + ", ".join(_NOMBRES_LLAVES[f["codigo"]] for f in nuevos) + "."
+
+
+def _playoffs_al_dia(partidos):
+    """Deja los Playoffs al día: crea los octavos cuando termina la fase regular
+    y, después, cada ronda a medida que se definen los ganadores.
+    Devuelve (cambio: bool, error: str | None)."""
+    try:
+        hay_octavos = any(
+            p.get("zona") == ZONA_PLAYOFFS and _entero(p.get("fecha_numero")) == FECHA_OCTAVOS
+            for p in partidos
+        )
+        if not hay_octavos:
+            if not estado_fase_regular(partidos)["completa"]:
+                return False, None
+            ok, msg = generar_playoffs_en_base(partidos)
+            if ok:
+                return True, None
+            return (False, None) if "ya están cargados" in msg else (False, msg)
+        n, _ = avanzar_playoffs_en_base(partidos)
+        return n > 0, None
+    except Exception as e:  # p. ej. RLS, red, o un id repetido por una carrera entre sesiones
+        return False, str(e)
+
+
+def _asegurar_playoffs(partidos):
+    """Mantiene los Playoffs al día (se llama al cargar la página y en cada
+    refresco de la boleta): si hay algo para crear, lo crea y devuelve la lista
+    de partidos recargada. Si falla, no insiste durante 2 minutos y guarda el
+    motivo para mostrárselo al admin."""
+    previo = st.session_state.get("_playoffs_auto_error")
+    if previo and (_time.time() - previo[0]) < 120:
+        return partidos
+    cambio, err = _playoffs_al_dia(partidos)
+    if err:
+        st.session_state["_playoffs_auto_error"] = (_time.time(), err)
+        return partidos
+    st.session_state.pop("_playoffs_auto_error", None)
+    return cargar_partidos() if cambio else partidos
+
+
+def _partidos_frescos():
+    """Partidos actualizados (caché de 30 s) con los Playoffs al día. Los
+    fragmentos (boleta y resultados del admin) lo llaman al empezar, así los
+    resultados nuevos y las rondas que se van armando aparecen solos, sin
+    recargar toda la página."""
+    try:
+        return _asegurar_playoffs(cargar_partidos())
+    except Exception:
+        return partidos_db
+
+
+def _update_partido_playoffs(partido_id, payload):
+    """UPDATE del resultado de un partido de Playoffs (con penales). Si las
+    columnas penales_* todavía no existen, guarda igual el resultado sin ellas
+    y devuelve un aviso con el SQL para crearlas. Devuelve (respuesta, aviso|None)."""
+    try:
+        return sb.table("partidos").update(payload).eq("id", partido_id).execute(), None
+    except Exception as e:
+        if "penales" not in str(e).lower():
+            raise
+        base = {k: v for k, v in payload.items() if not k.startswith("penales_")}
+        resp = sb.table("partidos").update(base).eq("id", partido_id).execute()
+        return resp, (
+            "Se guardó el resultado, pero faltan las columnas de penales en 'partidos'. "
+            "Ejecutá en Supabase: ALTER TABLE partidos ADD COLUMN IF NOT EXISTS penales_local integer, "
+            "ADD COLUMN IF NOT EXISTS penales_visitante integer;"
+        )
+
+
+# ── Pantalla de Playoffs (cuadro, tablas y escudos) ──────────────────────────
+_CSS_PLAYOFFS = (
+    "<style>"
+    ".po-ronda{font-family:'Bebas Neue',sans-serif;letter-spacing:.07em;font-size:1.2rem;color:#fb923c;margin:14px 0 4px;}"
+    ".po-llave{padding:8px 10px;margin:6px 0;border-radius:10px;background:rgba(255,255,255,.04);"
+    "border:1px solid rgba(255,255,255,.09);}"
+    ".po-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:.66rem;color:#94a3b8;"
+    "margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;}"
+    ".po-fila{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;}"
+    ".po-eq{display:flex;align-items:center;gap:6px;font-size:.84rem;min-width:0;}"
+    ".po-der{justify-content:flex-end;text-align:right;}"
+    ".po-res{font-family:'Bebas Neue',sans-serif;font-size:1.2rem;color:#e8c96b;text-align:center;min-width:52px;line-height:1.05;}"
+    ".po-vs{font-size:.85rem;color:#64748b;}"
+    ".po-pen{display:block;font-family:inherit;font-size:.62rem;color:#94a3b8;letter-spacing:0;}"
+    ".po-gana{font-weight:700;color:#4ade80;}"
+    ".po-pierde{opacity:.5;}"
+    ".po-tbd{color:#94a3b8;font-style:italic;}"
+    ".po-campeon{display:flex;align-items:center;gap:14px;padding:12px 16px;margin:8px 0 12px;border-radius:14px;"
+    "background:linear-gradient(135deg,rgba(232,201,107,.20),rgba(251,146,60,.14));border:1px solid rgba(232,201,107,.55);}"
+    ".po-camp-t{font-family:'Bebas Neue',sans-serif;letter-spacing:.12em;color:#e8c96b;font-size:1rem;}"
+    ".po-camp-n{font-family:'Bebas Neue',sans-serif;font-size:1.7rem;line-height:1;}"
+    ".po-tabla{width:100%;border-collapse:collapse;font-size:.74rem;}"
+    ".po-tabla th{color:#94a3b8;font-weight:600;padding:4px 6px;text-align:center;border-bottom:1px solid rgba(255,255,255,.15);}"
+    ".po-tabla td{padding:4px 6px;text-align:center;white-space:nowrap;}"
+    ".po-tabla td.po-tq{text-align:left;}"
+    ".po-tabla td.po-tq img{margin-right:6px;}"
+    "</style>"
+)
+
+
+def _img_escudo(equipo, px=24):
+    """Escudo del equipo, igual que en la boleta (`url_escudo`); 🛡️ si no hay."""
+    url = url_escudo(equipo) if equipo else ""
+    if url:
+        return (f'<img src="{_html.escape(url, quote=True)}" '
+                f'style="width:{px}px;height:{px}px;object-fit:contain;vertical-align:middle;flex-shrink:0;">')
+    return f'<span style="font-size:{int(px * 0.8)}px;line-height:1;opacity:.6;">🛡️</span>'
+
+
+def _html_tabla_zona(filas):
+    cols = ("PJ", "PG", "PE", "PP", "GF", "GC", "DG", "Pts")
+    cab = "<tr><th>#</th><th style='text-align:left'>Equipo</th>" + "".join(f"<th>{c}</th>" for c in cols) + "</tr>"
+    cuerpo = ""
+    for f in filas:
+        clasifica = f["pos"] <= CLASIFICAN_POR_ZONA
+        estilo = "background:rgba(52,211,153,.10);" if clasifica else ""
+        if f["pos"] == CLASIFICAN_POR_ZONA:
+            estilo += "border-bottom:2px dashed rgba(52,211,153,.6);"
+        dg = f"+{f['dg']}" if f["dg"] > 0 else str(f["dg"])
+        cuerpo += (
+            f"<tr style='{estilo}'><td>{f['pos']}</td>"
+            f"<td class='po-tq'>{_img_escudo(f['equipo'], 20)}{_html.escape(f['equipo'])}</td>"
+            f"<td>{f['pj']}</td><td>{f['pg']}</td><td>{f['pe']}</td><td>{f['pp']}</td>"
+            f"<td>{f['gf']}</td><td>{f['gc']}</td><td>{dg}</td><td><b>{f['pts']}</b></td></tr>"
+        )
+    return f"<div style='overflow-x:auto;'><table class='po-tabla'>{cab}{cuerpo}</table></div>"
+
+
+def _html_llave(s):
+    p, gan = s["partido"], s["ganador"]
+    if p is not None:                       # con partido real: se respeta local / visitante
+        izq, der = p["equipo_local"], p["equipo_visitante"]
+        desc_izq = desc_der = ""
+    else:
+        izq, der, desc_izq, desc_der = s["a"], s["b"], s["desc_a"], s["desc_b"]
+
+    def lado(eq, desc, a_la_derecha):
+        if eq:
+            cls = ""
+            if gan:
+                cls = "po-gana" if _norm_equipo(gan) == _norm_equipo(eq) else "po-pierde"
+            texto = f"<span>{_html.escape(eq)}</span>"
+        else:
+            cls, texto = "po-tbd", f"<span>{_html.escape(desc)}</span>"
+        img = _img_escudo(eq)
+        cuerpo = texto + img if a_la_derecha else img + texto
+        return f"<div class='po-eq{' po-der' if a_la_derecha else ''} {cls}'>{cuerpo}</div>"
+
+    if p is not None and _tiene_resultado(p):
+        pen = texto_penales(p)
+        centro = (f"<div class='po-res'>{p['goles_local']} - {p['goles_visitante']}"
+                  + (f"<span class='po-pen'>{pen}</span>" if pen else "") + "</div>")
+    else:
+        centro = "<div class='po-res po-vs'>vs</div>"
+
+    if s["estado"] == "jugado":
+        estado = f"✅ Avanza {_html.escape(gan)}"
+    elif s["estado"] == "penales":
+        estado = "⏳ Empate: falta cargar los penales"
+    elif s["estado"] == "por_jugar":
+        f_, h_ = _parsear_fecha(p.get("fecha_partido")), _parsear_hora(p.get("hora"))
+        estado = (f"🗓️ {f_.strftime('%d/%m')} · {h_.strftime('%H:%M')} hs"
+                  if (f_ and h_ and _horario_confirmado(p)) else "🕒 Día y hora a confirmar")
+    elif s["proyectado"]:
+        estado = "provisorio · según la tabla actual"
+    elif izq and der:
+        estado = "🕒 Por programar"      # ya están los dos equipos; el partido se crea solo
+    else:
+        estado = "⌛ A definir"
+    titulo = s["nombre"]
+    if s["ronda"] == FECHA_OCTAVOS and s["desc_a"] and s["desc_b"]:
+        titulo += f" · {_html.escape(s['desc_a'])} vs {_html.escape(s['desc_b'])}"
+    return (f"<div class='po-llave'><div class='po-head'><span>{titulo}</span><span>{estado}</span></div>"
+            f"<div class='po-fila'>{lado(izq, desc_izq, False)}{centro}{lado(der, desc_der, True)}</div></div>")
+
+
+def _html_cuadro(bracket):
+    partes = []
+    for ronda in _RONDAS_PLAYOFFS:
+        partes.append(f"<div class='po-ronda'>{_NOMBRES_RONDAS_PLAYOFFS[ronda]}</div>")
+        partes += [_html_llave(s) for s in bracket["llaves"] if s["ronda"] == ronda]
+    return "".join(partes)
+
+
+def _mostrar_info_playoffs(partidos, key_ns, admin_boton=False):
+    """Contenido de la pestaña Playoffs que va ARRIBA de los partidos: campeón,
+    cuadro completo con escudos (octavos → final), tablas de posiciones de la
+    fase regular y, para el admin, el botón para generar los cruces a mano."""
+    hay_playoffs = any(p.get("zona") == ZONA_PLAYOFFS for p in partidos)
+    estado = estado_fase_regular(partidos)
+    tablas, sin_zona = calcular_tablas_zonas(partidos)
+    bracket = calcular_bracket(partidos, tablas)
+    st.markdown(_CSS_PLAYOFFS, unsafe_allow_html=True)
+
+    if bracket["campeon"]:
+        camp = bracket["campeon"]
+        st.markdown(
+            f"<div class='po-campeon'>{_img_escudo(camp, 54)}<div><div class='po-camp-t'>🏆 CAMPEÓN</div>"
+            f"<div class='po-camp-n'>{_html.escape(camp)}</div></div></div>",
+            unsafe_allow_html=True,
+        )
+
+    if hay_playoffs:
+        st.caption(
+            "Partido único: el local es el mejor ubicado de la fase regular y, si hay empate, "
+            "se define por penales. Cada ronda se arma sola a medida que se definen los ganadores."
+        )
+    elif estado["total"] == 0:
+        st.info("🏆 Los cruces de Playoffs se arman solos cuando termina la fase regular.")
+    elif estado["completa"]:
+        st.info("🏆 La fase regular terminó. Los cruces se están generando…")
+    else:
+        st.info(
+            f"🏆 Los cruces de Playoffs se arman solos cuando terminan las {ULTIMA_FECHA_REGULAR} fechas "
+            f"de la fase regular. Faltan **{estado['faltan']}** partidos de {estado['total']}. "
+            "Mientras tanto se muestran con la tabla actual (provisorios)."
+        )
+
+    with st.expander("🧭 Cuadro de Playoffs", expanded=True, key=f"exp_cuadro_playoffs_{key_ns}"):
+        if bracket["llaves"][0]["a"] is None and not hay_playoffs:
+            st.caption("Todavía no hay resultados para proyectar los cruces.")
+        st.markdown(_html_cuadro(bracket), unsafe_allow_html=True)
+
+    if estado["jugados"]:
+        with st.expander("📊 Tablas de posiciones de la fase regular", expanded=False,
+                         key=f"exp_tablas_playoffs_{key_ns}"):
+            tab_a, tab_b = st.tabs(["Zona A", "Zona B"])
+            for tab_z, z in ((tab_a, "A"), (tab_b, "B")):
+                with tab_z:
+                    if tablas.get(z):
+                        st.markdown(_html_tabla_zona(tablas[z]), unsafe_allow_html=True)
+            st.caption(
+                f"Clasifican los {CLASIFICAN_POR_ZONA} primeros de cada zona (en verde). "
+                "Suman todos los partidos de la fase regular, interzonales incluidos. "
+                "Desempate: diferencia de gol y goles a favor."
+            )
+
+    if admin_boton:
+        if sin_zona:
+            st.warning(
+                "No pude ubicar en una zona a estos equipos (revisá que el nombre sea el mismo "
+                "que en sus partidos de zona): " + ", ".join(sin_zona)
+            )
+        for p in penales_pendientes(partidos):
+            st.warning(
+                f"⚠️ {p['equipo_local']} vs {p['equipo_visitante']} terminó empatado: cargá los "
+                "penales (más abajo, en su fecha) para que el cuadro avance."
+            )
+        if not hay_playoffs:
+            _err = st.session_state.get("_playoffs_auto_error")
+            if _err:
+                st.warning(f"La generación automática de los cruces no se pudo completar: {_err[1]}")
+            forzar = st.checkbox(
+                "Generar igual con la tabla actual (aunque falten resultados)",
+                key=f"chk_forzar_playoffs_{key_ns}",
+            )
+            if st.button("🏆 Generar cruces de Playoffs", key=f"btn_generar_playoffs_{key_ns}",
+                         use_container_width=True):
+                try:
+                    ok, msg = generar_playoffs_en_base(partidos, forzar=forzar)
+                except Exception as e:
+                    ok, msg = False, f"No se pudieron crear los cruces: {e}"
+                if ok:
+                    st.session_state.pop("_playoffs_auto_error", None)
+                    st.toast(msg, icon="🏆")  # el toast sobrevive al rerun; un st.success no
+                    st.rerun()
+                else:
+                    st.error(msg)
 
 
 def _traer_todo(tabla, columnas, orden="id"):
@@ -952,7 +1620,7 @@ def _resumen_zonas_html(pron_j, jugados_zf, zonas_orden, mes_label=""):
     bloques = [f'<div class="pc-sec">Aciertos por zona y fecha{_sufijo}</div>']
     for zona in zonas_orden:
         color = _COLORES_ZONA.get(zona, "#e8c96b")
-        titulo = "Interzonal" if zona == "Interzonal" else f"Zona {zona}"
+        titulo = _titulo_zona(zona)
         fechas = jugados_zf.get(zona, {})
         if not fechas:
             bloques.append(
@@ -1287,7 +1955,7 @@ def _fechas_a_compartir(pron, por_zona):
 def _texto_whatsapp_pronosticos(nombre, pron, por_zona, zonas_orden):
     """Arma el mensaje (con formato de WhatsApp: *negrita*) con el listado
     detallado de los pronósticos que el jugador tiene cargados AHORA en la
-    fecha vigente de cada zona (Zona A / Zona B / Interzonal).
+    fecha vigente de cada zona (Zona A / Zona B / Interzonal / Playoffs).
 
     Si el pronóstico se cargó eligiendo solo 1/X/2 (sin_marcador), se muestra
     el signo; si se cargó marcador exacto, se muestra el marcador.
@@ -1328,7 +1996,7 @@ def _texto_whatsapp_pronosticos(nombre, pron, por_zona, zonas_orden):
                     gl, gv = pr.get("goles_local_pred"), pr.get("goles_visitante_pred")
                     lineas.append(f"{local} *{gl} - {gv}* {visitante}")
             if lineas:
-                titulo = f"*{etiqueta_zona(zona)} · Fecha {clave}* ({len(lineas)}/{len(partidos)} cargados)"
+                titulo = f"*{etiqueta_zona(zona)} · {etiqueta_fecha(zona, clave)}* ({len(lineas)}/{len(partidos)} cargados)"
                 bloques.append((titulo, lineas))
 
     def _armar(bloques_):
@@ -1799,7 +2467,7 @@ if st.session_state._recien_logueado:
 
 st.markdown('<div class="titulo-pagina">BOLETA DIGITAL</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitulo-pagina">Clausura 2026 · Zona A / Zona B / Interzonal</div>',
+    '<div class="subtitulo-pagina">Clausura 2026 · Zona A / Zona B / Interzonal / Playoffs</div>',
     unsafe_allow_html=True,
 )
 
@@ -2213,10 +2881,13 @@ def _invalidar_cache_resultados(incluir_puntos: bool = True):
         _invalidar_cache_pron()
 
 
-def agrupar_por_zona_fecha(partidos):
+def agrupar_por_zona_fecha(partidos, incluir_playoffs=False):
     por_zona = {}
     for p in partidos:
         por_zona.setdefault(p["zona"], {}).setdefault(p["fecha_numero"], []).append(p)
+    if incluir_playoffs:
+        # La pestaña Playoffs se muestra siempre, aunque los cruces todavía no existan.
+        por_zona.setdefault(ZONA_PLAYOFFS, {})
     zonas_orden = sorted(
         por_zona.keys(), key=lambda z: (0 if z == "A" else 1 if z == "B" else 2, z)
     )
@@ -2224,7 +2895,7 @@ def agrupar_por_zona_fecha(partidos):
 
 
 def etiqueta_zona(z):
-    return "Interzonal" if z == "Interzonal" else f"Zona {z}"
+    return _titulo_zona(z)
 
 
 _COLOR_FORMA = {"V": "#22c55e", "E": "#9ca3af", "D": "#ef4444"}  # verde / gris / rojo
@@ -2288,6 +2959,10 @@ if not partidos_db:
     st.info("Todavía no hay partidos cargados.")
     st.stop()
 
+# Playoffs: cuando termina la fase regular (fecha 16) y todavía no existen, se
+# arman solos con la tabla de cada zona (1°A-8°B, 1°B-8°A, 2°A-7°B, ...).
+partidos_db = _asegurar_playoffs(partidos_db)
+
 # Racha de los últimos 5 partidos de cada equipo (para los puntitos de
 # color al lado de cada escudo). Se recalcula en cada corrida del script
 # a partir de `partidos_db` (que ya tiene su propio caché de 30s), así que
@@ -2324,7 +2999,11 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
     pantalla no hay ningún riesgo: no se puede guardar nada fuera de horario
     de todas formas.
     """
-    por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
+    # Partidos frescos (caché de 30 s) con los Playoffs al día: así los resultados
+    # nuevos y las rondas que se van armando (cuartos, semis, final) aparecen solos
+    # en cada refresco del fragmento, sin tener que recargar toda la página.
+    partidos_db = _partidos_frescos()
+    por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db, incluir_playoffs=True)
 
     # Caché en memoria de los pronósticos de este jugador: se consulta la
     # base UNA sola vez por sesión y de ahí en más se actualiza en el momento
@@ -2576,6 +3255,8 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
     tabs = st.tabs([etiqueta_zona(z) for z in zonas_orden], key=_key_tabs_zona)
     for tab, zona in zip(tabs, zonas_orden):
         with tab:
+            if zona == ZONA_PLAYOFFS:
+                _mostrar_info_playoffs(partidos_db, key_ns=f"{key_ns}_{jugador_objetivo_id}")
             fechas = sorted(por_zona[zona].keys(), key=int)
             for fecha in fechas:
                 partidos_fecha = sorted(
@@ -2597,7 +3278,7 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                     1 for p in _partidos_jugados_fecha
                     if (pron.get(p["id"], {}) or {}).get("puntos") not in (None, 0)
                 )
-                _label_fecha = f"Fecha {fecha}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"
+                _label_fecha = f"{etiqueta_fecha(zona, fecha)}  ·  {cargados}/{len(partidos_fecha)} pronósticos cargados"
                 if _partidos_jugados_fecha:
                     _label_fecha += f"  ·  ✅ {_aciertos_fecha}/{len(_partidos_jugados_fecha)} aciertos"
 
@@ -2741,6 +3422,13 @@ def _mostrar_boleta_fragment(jugador_objetivo_id, jugador_objetivo_nombre, edita
                                     f'font-size:1.6rem;color:#e8c96b;">{gl_real} - {gv_real}</div>',
                                     unsafe_allow_html=True,
                                 )
+                                _pen_txt = texto_penales(p)
+                                if _pen_txt:
+                                    st.markdown(
+                                        f'<div style="text-align:center;font-size:.68rem;color:#94a3b8;'
+                                        f'margin-top:-6px;">{_pen_txt}</div>',
+                                        unsafe_allow_html=True,
+                                    )
                             else:
                                 st.markdown(
                                     '<div style="text-align:center;font-family:\'Bebas Neue\',sans-serif;'
@@ -3027,16 +3715,21 @@ def _tab_resultados_fragment():
     obliga a re-renderizar toda esta también, así el panel admin se
     siente más ágil en general.
     """
+    # Partidos frescos + Playoffs al día (si acabás de cargar el resultado de un
+    # partido de Playoffs, la ronda siguiente se crea sola en este mismo refresco).
+    partidos_db = _partidos_frescos()
     with tab_resultados:
         st.caption(
             "Cargá el resultado real de cada partido. Los pronósticos se comparan "
             "automáticamente: 1 punto si acertaron el signo (1/X/2), 3 puntos en "
             "total si acertaron el marcador exacto."
         )
-        por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db)
+        por_zona, zonas_orden = agrupar_por_zona_fecha(partidos_db, incluir_playoffs=True)
         tabs_r = st.tabs([etiqueta_zona(z) for z in zonas_orden])
         for tab, zona in zip(tabs_r, zonas_orden):
             with tab:
+                if zona == ZONA_PLAYOFFS:
+                    _mostrar_info_playoffs(partidos_db, key_ns="admin_resultados", admin_boton=True)
                 fechas = sorted(por_zona[zona].keys(), key=int)
                 for fecha in fechas:
                     partidos_fecha = sorted(
@@ -3049,7 +3742,7 @@ def _tab_resultados_fragment():
                     # (por defecto Streamlit lo volvería a cerrar en cada rerun).
                     _exp_fecha_key = f"exp_open_fecha_{clave_fecha}"
                     with st.expander(
-                        f"Fecha {fecha}",
+                        etiqueta_fecha(zona, fecha),
                         expanded=st.session_state.get(_exp_fecha_key, False),
                         key=_exp_fecha_key,
                     ):
@@ -3150,6 +3843,7 @@ def _tab_resultados_fragment():
                                 st.markdown(
                                     f"**{local}** vs **{visitante}** — "
                                     f"Resultado: `{gl_act}-{gv_act}` → **{signo_actual}**"
+                                    + (f" · {texto_penales(p)}" if texto_penales(p) else "")
                                 )
                             else:
                                 st.markdown(f"**{local}** vs **{visitante}** — *Sin resultado*")
@@ -3172,15 +3866,29 @@ def _tab_resultados_fragment():
                                 if st.button("💾 Guardar", key=f"admin_save_{p['id']}", use_container_width=True):
                                   with st.spinner("Guardando resultado y recalculando puntos…"):
                                     try:
-                                        resp_update = (
-                                            sb.table("partidos")
-                                            .update({
-                                                "goles_local":     int(gl_new),
-                                                "goles_visitante": int(gv_new),
-                                            })
-                                            .eq("id", p["id"])
-                                            .execute()
-                                        )
+                                        _payload_res = {
+                                            "goles_local":     int(gl_new),
+                                            "goles_visitante": int(gv_new),
+                                        }
+                                        if zona == ZONA_PLAYOFFS:
+                                            # Penales: solo cuentan si hubo empate; si no, se limpian.
+                                            _hubo_empate = int(gl_new) == int(gv_new)
+                                            _payload_res["penales_local"] = (
+                                                int(st.session_state.get(f"admin_pl_{p['id']}") or 0) if _hubo_empate else None
+                                            )
+                                            _payload_res["penales_visitante"] = (
+                                                int(st.session_state.get(f"admin_pv_{p['id']}") or 0) if _hubo_empate else None
+                                            )
+                                            resp_update, _aviso_pen = _update_partido_playoffs(p["id"], _payload_res)
+                                            if _aviso_pen:
+                                                st.toast(_aviso_pen, icon="⚠️")
+                                        else:
+                                            resp_update = (
+                                                sb.table("partidos")
+                                                .update(_payload_res)
+                                                .eq("id", p["id"])
+                                                .execute()
+                                            )
 
                                         filas_afectadas = resp_update.data or []
 
@@ -3378,6 +4086,26 @@ def _tab_resultados_fragment():
                                     except Exception as e:
                                         st.error(f"Error al resetear: {e}")
                                         st.exception(e)
+
+                            # ── Penales (solo Playoffs): si el partido terminó empatado, el
+                            # que avanza se define acá. Se ignoran si no hubo empate.
+                            if zona == ZONA_PLAYOFFS:
+                                cp1, cp2, cp3 = st.columns([1, 1, 2])
+                                with cp1:
+                                    st.number_input(
+                                        "Penales local", min_value=0, max_value=30,
+                                        value=int(p.get("penales_local") or 0),
+                                        key=f"admin_pl_{p['id']}",
+                                    )
+                                with cp2:
+                                    st.number_input(
+                                        "Penales visitante", min_value=0, max_value=30,
+                                        value=int(p.get("penales_visitante") or 0),
+                                        key=f"admin_pv_{p['id']}",
+                                    )
+                                with cp3:
+                                    st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                                    st.caption("Solo si terminó empatado y se definió por penales.")
 
                             # ── Modificar horario manualmente ─────────────────
                             # Además de poder cargarse/corregirse directo en la
